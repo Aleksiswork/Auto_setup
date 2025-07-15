@@ -26,31 +26,51 @@ for pkg in "${PACKAGES[@]}"; do
 done
 
 echo
-echo "\n=== Создание нового пользователя ===" | tee -a $LOGFILE
-read -p "Введите имя нового пользователя: " NEW_USER
-
-if id "$NEW_USER" &>/dev/null; then
-    echo "Пользователь $NEW_USER уже существует." | tee -a $LOGFILE
+echo "=== Создание нового пользователя ===" | tee -a $LOGFILE
+echo | tee -a $LOGFILE
+echo "Хотите создать нового пользователя? (y/n): "
+read CREATE_NEW_USER
+if [[ "$CREATE_NEW_USER" =~ ^([yY][eE][sS]?|[yY])$ ]]; then
+    echo | tee -a $LOGFILE
+    echo "=== Создание нового пользователя ===" | tee -a $LOGFILE
+    read -p "Введите имя нового пользователя: " NEW_USER
+    if id "$NEW_USER" &>/dev/null; then
+        echo "Пользователь $NEW_USER уже существует." | tee -a $LOGFILE
+    else
+        sudo adduser "$NEW_USER" | tee -a $LOGFILE
+        sudo usermod -aG sudo "$NEW_USER" | tee -a $LOGFILE
+        echo "Пользователь $NEW_USER создан и добавлен в группу sudo." | tee -a $LOGFILE
+    fi
+    echo | tee -a $LOGFILE
+    echo "Копирую SSH-ключи для пользователя $NEW_USER..." | tee -a $LOGFILE
+    USER_HOME="/home/$NEW_USER"
+    sudo mkdir -p "$USER_HOME/.ssh" | tee -a $LOGFILE
+    sudo cp /root/.ssh/authorized_keys "$USER_HOME/.ssh/authorized_keys" | tee -a $LOGFILE
+    sudo chown -R "$NEW_USER:$NEW_USER" "$USER_HOME/.ssh" | tee -a $LOGFILE
+    sudo chmod 700 "$USER_HOME/.ssh" | tee -a $LOGFILE
+    sudo chmod 600 "$USER_HOME/.ssh/authorized_keys" | tee -a $LOGFILE
+    echo "SSH-ключи скопированы для пользователя $NEW_USER." | tee -a $LOGFILE
 else
-    sudo adduser "$NEW_USER" | tee -a $LOGFILE
-    sudo usermod -aG sudo "$NEW_USER" | tee -a $LOGFILE
-    echo "Пользователь $NEW_USER создан и добавлен в группу sudo." | tee -a $LOGFILE
+    echo "Создание нового пользователя пропущено." | tee -a $LOGFILE
+    # Для совместимости с остальным скриптом NEW_USER= текущий root
+    NEW_USER="root"
 fi
-
-# Копирование SSH-ключа для нового пользователя
-USER_HOME="/home/$NEW_USER"
-echo
-echo "Копирую SSH-ключи для пользователя $NEW_USER..." | tee -a $LOGFILE
-sudo mkdir -p "$USER_HOME/.ssh" | tee -a $LOGFILE
-sudo cp /root/.ssh/authorized_keys "$USER_HOME/.ssh/authorized_keys" | tee -a $LOGFILE
-sudo chown -R "$NEW_USER:$NEW_USER" "$USER_HOME/.ssh" | tee -a $LOGFILE
-sudo chmod 700 "$USER_HOME/.ssh" | tee -a $LOGFILE
-sudo chmod 600 "$USER_HOME/.ssh/authorized_keys" | tee -a $LOGFILE
-echo "SSH-ключи скопированы для пользователя $NEW_USER." | tee -a $LOGFILE
 
 echo
 echo "=== Настройка SSH ===" | tee -a $LOGFILE
 read -p "Введите новый порт для SSH (например, 2222): " NEW_SSH_PORT 
+
+if [ -z "$NEW_SSH_PORT" ]; then
+    # Получаем текущий порт из конфига
+    CURRENT_PORT=$(grep -E '^Port ' /etc/ssh/sshd_config | awk '{print $2}' | head -n1)
+    if [ -n "$CURRENT_PORT" ]; then
+        NEW_SSH_PORT="$CURRENT_PORT"
+        echo "Порт не введён. Использую текущий порт из конфига: $NEW_SSH_PORT" | tee -a $LOGFILE
+    else
+        NEW_SSH_PORT=22
+        echo "Порт не введён и не найден в конфиге. Использую порт по умолчанию: 22" | tee -a $LOGFILE
+    fi
+fi
 
 echo
 echo "Изменяю порт SSH на $NEW_SSH_PORT..." | tee -a $LOGFILE
@@ -67,15 +87,29 @@ sudo systemctl restart sshd | tee -a $LOGFILE
 echo "Порт SSH изменён и служба перезапущена." | tee -a $LOGFILE 
 
 # Отключение входа под root
-echo
-echo "Отключаю вход по SSH под root..." | tee -a $LOGFILE
-if grep -q '^#\?PermitRootLogin ' /etc/ssh/sshd_config; then
-    sudo sed -i 's/^#\?PermitRootLogin .*/PermitRootLogin no/' /etc/ssh/sshd_config | tee -a $LOGFILE
+# Проверка наличия других пользователей кроме root с shell /bin/bash или /bin/sh
+OTHER_USERS=$(awk -F: '($3>=1000)&&($1!="root")&&(($7=="/bin/bash")||($7=="/bin/sh")) {print $1}' /etc/passwd)
+if [ -z "$OTHER_USERS" ]; then
+    echo | tee -a $LOGFILE
+    echo "Нет других пользователей кроме root с shell /bin/bash или /bin/sh. Отключение входа под root пропущено." | tee -a $LOGFILE
 else
-    echo 'PermitRootLogin no' | sudo tee -a /etc/ssh/sshd_config > /dev/null
+    echo | tee -a $LOGFILE
+    echo "Обнаружены пользователи: $OTHER_USERS" | tee -a $LOGFILE
+    read -p "Отключить вход по SSH под root? (y/n): " DISABLE_ROOT_LOGIN
+    if [[ "$DISABLE_ROOT_LOGIN" =~ ^([yY][eE][sS]?|[yY])$ ]]; then
+        echo | tee -a $LOGFILE
+        echo "Отключаю вход по SSH под root..." | tee -a $LOGFILE
+        if grep -q '^#\?PermitRootLogin ' /etc/ssh/sshd_config; then
+            sudo sed -i 's/^#\?PermitRootLogin .*/PermitRootLogin no/' /etc/ssh/sshd_config | tee -a $LOGFILE
+        else
+            echo 'PermitRootLogin no' | sudo tee -a /etc/ssh/sshd_config > /dev/null
+        fi
+        sudo systemctl restart sshd | tee -a $LOGFILE
+        echo "Вход по SSH под root отключён." | tee -a $LOGFILE
+    else
+        echo "Отключение входа под root пропущено по выбору пользователя." | tee -a $LOGFILE
+    fi
 fi
-sudo systemctl restart sshd | tee -a $LOGFILE
-echo "Вход по SSH под root отключён." | tee -a $LOGFILE 
 
 # Отключение входа по паролю в cloud-init конфиге
 CLOUD_INIT_SSHD_CONF="/etc/ssh/sshd_config.d/50-cloud-init.conf"
@@ -95,90 +129,109 @@ fi
 
 echo
 echo "=== Установка Docker и docker-compose ===" | tee -a $LOGFILE
-read -p "Хотите установить Docker и docker-compose? (y/n): " INSTALL_DOCKER 
-
-if [[ "$INSTALL_DOCKER" =~ ^([yY][eE][sS]?|[yY])$ ]]; then
-    echo
-    echo "Устанавливаю Docker..." | tee -a $LOGFILE
-    curl -fsSL https://get.docker.com -o get-docker.sh | tee -a $LOGFILE
-    sudo sh get-docker.sh | tee -a $LOGFILE
-    sudo usermod -aG docker "$NEW_USER" | tee -a $LOGFILE
-    # Проверка и устранение блокировок dpkg/apt
-    if sudo fuser /var/lib/dpkg/lock >/dev/null 2>&1 || sudo fuser /var/lib/apt/lists/lock >/dev/null 2>&1; then
-        echo "Ждём освобождения менеджера пакетов..." | tee -a $LOGFILE
-        while sudo fuser /var/lib/dpkg/lock >/dev/null 2>&1 || sudo fuser /var/lib/apt/lists/lock >/dev/null 2>&1; do
-            sleep 2
-        done
-    fi
-    if sudo test -f /var/lib/dpkg/lock-frontend || sudo test -f /var/lib/dpkg/lock; then
-        echo "Обнаружена блокировка dpkg. Попытка исправить..." | tee -a $LOGFILE
-        sudo dpkg --configure -a | tee -a $LOGFILE
-    fi
-    # После установки Docker
-    if command -v docker >/dev/null 2>&1; then
-        echo "Docker установлен и пользователь $NEW_USER добавлен в группу docker." | tee -a $LOGFILE
-    else
-        echo "Ошибка: Docker не установлен! Проверьте вывод выше." | tee -a $LOGFILE
-    fi
-
-    echo
-    echo "Устанавливаю docker-compose..." | tee -a $LOGFILE
-    sudo apt-get install -y docker-compose | tee -a $LOGFILE
-    # Установка docker-compose
-    if command -v docker-compose >/dev/null 2>&1; then
-        echo "docker-compose установлен." | tee -a $LOGFILE
-    else
-        echo "Ошибка: docker-compose не установлен! Проверьте вывод выше." | tee -a $LOGFILE
-    fi
+if command -v docker >/dev/null 2>&1; then
+    echo "Docker уже установлен. Пропускаю установку Docker и docker-compose." | tee -a $LOGFILE
 else
-    echo "Docker и docker-compose не будут установлены." | tee -a $LOGFILE
+    echo | tee -a $LOGFILE
+    echo "=== Установка Docker и docker-compose ===" | tee -a $LOGFILE
+    read -p "Хотите установить Docker и docker-compose? (y/n): " INSTALL_DOCKER 
+
+    if [[ "$INSTALL_DOCKER" =~ ^([yY][eE][sS]?|[yY])$ ]]; then
+        echo
+        echo "Устанавливаю Docker..." | tee -a $LOGFILE
+        curl -fsSL https://get.docker.com -o get-docker.sh | tee -a $LOGFILE
+        sudo sh get-docker.sh | tee -a $LOGFILE
+        sudo usermod -aG docker "$NEW_USER" | tee -a $LOGFILE
+        # Проверка и устранение блокировок dpkg/apt
+        if sudo fuser /var/lib/dpkg/lock >/dev/null 2>&1 || sudo fuser /var/lib/apt/lists/lock >/dev/null 2>&1; then
+            echo "Ждём освобождения менеджера пакетов..." | tee -a $LOGFILE
+            while sudo fuser /var/lib/dpkg/lock >/dev/null 2>&1 || sudo fuser /var/lib/apt/lists/lock >/dev/null 2>&1; do
+                sleep 2
+            done
+        fi
+        if sudo test -f /var/lib/dpkg/lock-frontend || sudo test -f /var/lib/dpkg/lock; then
+            echo "Обнаружена блокировка dpkg. Попытка исправить..." | tee -a $LOGFILE
+            sudo dpkg --configure -a | tee -a $LOGFILE
+        fi
+        # После установки Docker
+        if command -v docker >/dev/null 2>&1; then
+            echo "Docker установлен и пользователь $NEW_USER добавлен в группу docker." | tee -a $LOGFILE
+        else
+            echo "Ошибка: Docker не установлен! Проверьте вывод выше." | tee -a $LOGFILE
+        fi
+
+        echo
+        echo "Устанавливаю docker-compose..." | tee -a $LOGFILE
+        sudo apt-get install -y docker-compose | tee -a $LOGFILE
+        # Установка docker-compose
+        if command -v docker-compose >/dev/null 2>&1; then
+            echo "docker-compose установлен." | tee -a $LOGFILE
+        else
+            echo "Ошибка: docker-compose не установлен! Проверьте вывод выше." | tee -a $LOGFILE
+        fi
+    else
+        echo "Docker и docker-compose не будут установлены." | tee -a $LOGFILE
+    fi
 fi 
 
 echo
 echo "=== Установка и настройка фаервола (ufw) ===" | tee -a $LOGFILE
-read -p "Хотите установить и настроить фаервол (ufw)? (y/n): " INSTALL_UFW
-
-if [[ "$INSTALL_UFW" =~ ^([yY][eE][sS]?|[yY])$ ]]; then
-    echo
-    echo "Устанавливаю ufw..." | tee -a $LOGFILE
-    sudo apt-get install -y ufw | tee -a $LOGFILE
-    echo "Разрешаю порт SSH ($NEW_SSH_PORT) в ufw..." | tee -a $LOGFILE
-    sudo ufw allow "$NEW_SSH_PORT"/tcp | tee -a $LOGFILE
-    sudo ufw --force enable | tee -a $LOGFILE
-    echo "ufw установлен и настроен. SSH-порт $NEW_SSH_PORT разрешён." | tee -a $LOGFILE
-    echo "\n=== Справка по работе с ufw ==="
-    echo "Добавить порт: sudo ufw allow <порт>/tcp"
-    echo "Заблокировать порт: sudo ufw deny <порт>/tcp"
-    echo "Посмотреть открытые порты: sudo ufw status verbose"
-    echo "Посмотреть используемые порты в системе: sudo ss -tulnp" 
+if dpkg -s ufw >/dev/null 2>&1; then
+    echo "ufw уже установлен. Пропускаю установку." | tee -a $LOGFILE
 else
-    echo "ufw не будет установлен." | tee -a $LOGFILE
+    echo | tee -a $LOGFILE
+    echo "=== Установка и настройка фаервола (ufw) ===" | tee -a $LOGFILE
+    read -p "Хотите установить и настроить фаервол (ufw)? (y/n): " INSTALL_UFW
+
+    if [[ "$INSTALL_UFW" =~ ^([yY][eE][sS]?|[yY])$ ]]; then
+        echo
+        echo "Устанавливаю ufw..." | tee -a $LOGFILE
+        sudo apt-get install -y ufw | tee -a $LOGFILE
+        echo "Разрешаю порт SSH ($NEW_SSH_PORT) в ufw..." | tee -a $LOGFILE
+        sudo ufw allow "$NEW_SSH_PORT"/tcp | tee -a $LOGFILE
+        sudo ufw --force enable | tee -a $LOGFILE
+        echo "ufw установлен и настроен. SSH-порт $NEW_SSH_PORT разрешён." | tee -a $LOGFILE
+        echo "=== Справка по работе с ufw ==="
+        echo "Добавить порт: sudo ufw allow <порт>/tcp"
+        echo "Заблокировать порт: sudo ufw deny <порт>/tcp"
+        echo "Посмотреть открытые порты: sudo ufw status verbose"
+        echo "Посмотреть используемые порты в системе: sudo ss -tulnp" 
+    else
+        echo "ufw не будет установлен." | tee -a $LOGFILE
+    fi
 fi 
 
 echo
 echo "=== Установка и настройка автоматических обновлений (unattended-upgrades) ===" | tee -a $LOGFILE
-read -p "Хотите установить автоматические обновления (unattended-upgrades)? (y/n): " INSTALL_UNATTENDED
-
-if [[ "$INSTALL_UNATTENDED" =~ ^([yY][eE][sS]?|[yY])$ ]]; then
-    sudo apt-get install -y unattended-upgrades | tee -a $LOGFILE
-    sudo dpkg-reconfigure --priority=low unattended-upgrades | tee -a $LOGFILE
-    sudo systemctl enable unattended-upgrades | tee -a $LOGFILE
-    sudo systemctl start unattended-upgrades | tee -a $LOGFILE
-    echo "\nСправка:"
-    echo "Основной конфиг: /etc/apt/apt.conf.d/50unattended-upgrades"
-    echo "Параметры автозапуска: /etc/apt/apt.conf.d/20auto-upgrades"
-    echo "Проверить работу: sudo unattended-upgrades --dry-run --debug"
-    echo "Оставляю только обновления безопасности в /etc/apt/apt.conf.d/50unattended-upgrades..." | tee -a $LOGFILE
-    sudo sed -i \
-        -e 's|^// *\("\${distro_id}:\${distro_codename}-security";\)|\1|' \
-        -e 's|^ *\("\${distro_id}:\${distro_codename}-updates";\)|// \1|' \
-        -e 's|^ *\("\${distro_id}:\${distro_codename}-proposed";\)|// \1|' \
-        -e 's|^ *\("\${distro_id}:\${distro_codename}-proposed-updates";\)|// \1|' \
-        -e 's|^ *\("\${distro_id}:\${distro_codename}-backports";\)|// \1|' \
-        /etc/apt/apt.conf.d/50unattended-upgrades | tee -a $LOGFILE
-    echo "Только security-обновления будут устанавливаться автоматически." | tee -a $LOGFILE
+if dpkg -s unattended-upgrades >/dev/null 2>&1; then
+    echo "unattended-upgrades уже установлен. Пропускаю установку." | tee -a $LOGFILE
 else
-    echo "unattended-upgrades не будет установлен." | tee -a $LOGFILE
+    echo | tee -a $LOGFILE
+    echo "=== Установка и настройка автоматических обновлений (unattended-upgrades) ===" | tee -a $LOGFILE
+    read -p "Хотите установить автоматические обновления (unattended-upgrades)? (y/n): " INSTALL_UNATTENDED
+
+    if [[ "$INSTALL_UNATTENDED" =~ ^([yY][eE][sS]?|[yY])$ ]]; then
+        # Заменяю установку unattended-upgrades на non-interactive с сохранением локальных конфигов
+        sudo DEBIAN_FRONTEND=noninteractive apt-get -o Dpkg::Options::="--force-confold" install -y unattended-upgrades | tee -a $LOGFILE
+        sudo dpkg-reconfigure --priority=low unattended-upgrades | tee -a $LOGFILE
+        sudo systemctl enable unattended-upgrades | tee -a $LOGFILE
+        sudo systemctl start unattended-upgrades | tee -a $LOGFILE
+        echo Справка:"
+        echo "Основной конфиг: /etc/apt/apt.conf.d/50unattended-upgrades"
+        echo "Параметры автозапуска: /etc/apt/apt.conf.d/20auto-upgrades"
+        echo "Проверить работу: sudo unattended-upgrades --dry-run --debug"
+        echo "Оставляю только обновления безопасности в /etc/apt/apt.conf.d/50unattended-upgrades..." | tee -a $LOGFILE
+        sudo sed -i \
+            -e 's|^// *\("\${distro_id}:\${distro_codename}-security";\)|\1|' \
+            -e 's|^ *\("\${distro_id}:\${distro_codename}-updates";\)|// \1|' \
+            -e 's|^ *\("\${distro_id}:\${distro_codename}-proposed";\)|// \1|' \
+            -e 's|^ *\("\${distro_id}:\${distro_codename}-proposed-updates";\)|// \1|' \
+            -e 's|^ *\("\${distro_id}:\${distro_codename}-backports";\)|// \1|' \
+            /etc/apt/apt.conf.d/50unattended-upgrades | tee -a $LOGFILE
+        echo "Только security-обновления будут устанавливаться автоматически." | tee -a $LOGFILE
+    else
+        echo "unattended-upgrades не будет установлен." | tee -a $LOGFILE
+    fi
 fi 
 
 echo

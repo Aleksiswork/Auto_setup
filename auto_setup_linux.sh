@@ -211,12 +211,12 @@ else
     read -p "Хотите установить автоматические обновления (unattended-upgrades)? (y/n): " INSTALL_UNATTENDED
 
     if [[ "$INSTALL_UNATTENDED" =~ ^([yY][eE][sS]?|[yY])$ ]]; then
-        # Заменяю установку unattended-upgrades на non-interactive с сохранением локальных конфигов
+        echo 'unattended-upgrades unattended-upgrades/enable_auto_updates boolean true' | sudo debconf-set-selections
         sudo DEBIAN_FRONTEND=noninteractive apt-get -o Dpkg::Options::="--force-confold" install -y unattended-upgrades | tee -a $LOGFILE
-        sudo dpkg-reconfigure --priority=low unattended-upgrades | tee -a $LOGFILE
+        # sudo dpkg-reconfigure --priority=low unattended-upgrades | tee -a $LOGFILE  # УБРАНО для non-interactive
         sudo systemctl enable unattended-upgrades | tee -a $LOGFILE
         sudo systemctl start unattended-upgrades | tee -a $LOGFILE
-        echo Справка:"
+        echo "Справка:"
         echo "Основной конфиг: /etc/apt/apt.conf.d/50unattended-upgrades"
         echo "Параметры автозапуска: /etc/apt/apt.conf.d/20auto-upgrades"
         echo "Проверить работу: sudo unattended-upgrades --dry-run --debug"
@@ -229,6 +229,7 @@ else
             -e 's|^ *\("\${distro_id}:\${distro_codename}-backports";\)|// \1|' \
             /etc/apt/apt.conf.d/50unattended-upgrades | tee -a $LOGFILE
         echo "Только security-обновления будут устанавливаться автоматически." | tee -a $LOGFILE
+        sudo sed -i 's|^\s*"\?origin=Debian,codename=\${distro_codename},label=Debian";|// "origin=Debian,codename=${distro_codename},label=Debian";|' /etc/apt/apt.conf.d/50unattended-upgrades
     else
         echo "unattended-upgrades не будет установлен." | tee -a $LOGFILE
     fi

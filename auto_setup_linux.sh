@@ -13,7 +13,8 @@ if [ ! -f /root/.ssh/authorized_keys ] || [ ! -s /root/.ssh/authorized_keys ]; t
 fi
 
 echo "Обновление системы..." | tee -a $LOGFILE
-sudo apt update && sudo apt upgrade -y | tee -a $LOGFILE
+sudo apt update | tee -a $LOGFILE
+sudo DEBIAN_FRONTEND=noninteractive apt-get -o Dpkg::Options::="--force-confold" upgrade -y | tee -a $LOGFILE
 
 for pkg in "${PACKAGES[@]}"; do
     if dpkg -s "$pkg" &> /dev/null; then

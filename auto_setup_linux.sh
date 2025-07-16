@@ -4,31 +4,43 @@
 # Скрипт автоматической настройки Linux-системы
 # Выполняет следующие шаги:
 #
+# 0. Проверка запуска с root-правами (sudo/root)
 # 1. Проверка наличия SSH-ключа для root
 # 2. Обновление системы и установка базовых пакетов (curl, wget, git, htop, mc)
 #    - Устанавливает только отсутствующие пакеты
+#    - Проверяет успешность установки каждого пакета
 # 3. (По желанию) Создание нового пользователя, добавление в sudo, копирование SSH-ключа
 # 4. Настройка SSH:
 #    - Запрос нового порта (или использование текущего)
-#    - Изменение порта, резервная копия конфига, перезапуск sshd
+#    - Изменение порта, резервная копия конфига, перезапуск sshd (с проверкой успешности)
 # 5. Отключение входа под root:
 #    - Если есть другие пользователи, спрашивает, отключать ли root
 #    - Если нет — пропускает
-# 6. Отключение входа по паролю (PasswordAuthentication no) в cloud-init конфиге
+# 6. Отключение входа по паролю (PasswordAuthentication no) в cloud-init конфиге (с проверкой успешности)
 # 7. (По желанию) Установка Docker и docker-compose, добавление пользователя в группу docker
 #    - Пропускает, если уже установлены
+#    - После установки Docker временный файл get-docker.sh удаляется
+#    - Проверяет успешность установки
 # 8. (По желанию) Создание swap-файла при малом объёме RAM
+#    - Перед добавлением swap в /etc/fstab проверяет отсутствие дублирования
 # 9. (По желанию) Установка unattended-upgrades (автообновления)
 #    - Только security-обновления, автоматическая настройка, без диалогов
 #    - Пропускает, если уже установлен
 # 10. (По желанию) Установка и настройка ufw (фаервола), разрешение SSH-порта
 #     - Пропускает, если уже установлен
 # 11. Очистка системы (apt autoremove, apt clean)
-# 12. Финальное сообщение о завершении
+# 12. Финальное сообщение и чек-лист по результатам настройки:
+#     - Созданные пользователи, SSH-порт, статус Docker, swap, UFW, открытые порты, путь к лог-файлу
 # =============================================
 
 # Лог-файл
 LOGFILE="setup.log"
+
+# 1. Проверка наличия root-прав
+if [ "$EUID" -ne 0 ]; then
+  echo "Пожалуйста, запустите скрипт с root-правами (sudo)!"
+  exit 1
+fi
 
 # Список пакетов для установки
 PACKAGES=(curl wget git htop mc)
@@ -49,6 +61,10 @@ for pkg in "${PACKAGES[@]}"; do
     else
         echo "Устанавливаю $pkg..." | tee -a $LOGFILE
         sudo apt install -y "$pkg" | tee -a $LOGFILE
+        # 4. Проверка успешности установки пакета
+        if [ $? -ne 0 ]; then
+            echo "Ошибка при установке $pkg!" | tee -a $LOGFILE
+        fi
     fi
 done
 
@@ -103,6 +119,10 @@ echo
 echo "Изменяю порт SSH на $NEW_SSH_PORT..." | tee -a $LOGFILE
 # Резервная копия конфига
 sudo cp /etc/ssh/sshd_config /etc/ssh/sshd_config.bak | tee -a $LOGFILE
+# 4. Проверка успешности бэкапа
+if [ $? -ne 0 ]; then
+    echo "Ошибка при создании резервной копии sshd_config!" | tee -a $LOGFILE
+fi
 # Изменение или добавление строки Port
 if grep -q '^#\?Port ' /etc/ssh/sshd_config; then
     sudo sed -i "s/^#\?Port .*/Port $NEW_SSH_PORT/" /etc/ssh/sshd_config | tee -a $LOGFILE
@@ -111,6 +131,10 @@ else
 fi
 # Перезапуск sshd
 sudo systemctl restart sshd | tee -a $LOGFILE
+# 4. Проверка успешности перезапуска sshd
+if [ $? -ne 0 ]; then
+    echo "Ошибка при перезапуске sshd!" | tee -a $LOGFILE
+fi
 echo "Порт SSH изменён и служба перезапущена." | tee -a $LOGFILE 
 
 # Отключение входа под root
@@ -132,6 +156,10 @@ else
             echo 'PermitRootLogin no' | sudo tee -a /etc/ssh/sshd_config > /dev/null
         fi
         sudo systemctl restart sshd | tee -a $LOGFILE
+        # 4. Проверка успешности перезапуска sshd
+        if [ $? -ne 0 ]; then
+            echo "Ошибка при перезапуске sshd!" | tee -a $LOGFILE
+        fi
         echo "Вход по SSH под root отключён." | tee -a $LOGFILE
     else
         echo "Отключение входа под root пропущено по выбору пользователя." | tee -a $LOGFILE
@@ -149,6 +177,10 @@ if [ -f "$CLOUD_INIT_SSHD_CONF" ]; then
         echo 'PasswordAuthentication no' | sudo tee -a "$CLOUD_INIT_SSHD_CONF" > /dev/null
     fi
     sudo systemctl restart sshd | tee -a $LOGFILE
+    # 4. Проверка успешности перезапуска sshd
+    if [ $? -ne 0 ]; then
+        echo "Ошибка при перезапуске sshd!" | tee -a $LOGFILE
+    fi
     echo "Вход по паролю отключён в $CLOUD_INIT_SSHD_CONF." | tee -a $LOGFILE
 else
     echo "$CLOUD_INIT_SSHD_CONF не найден, пропускаю этот шаг." | tee -a $LOGFILE
@@ -168,6 +200,8 @@ else
         echo "Устанавливаю Docker..." | tee -a $LOGFILE
         curl -fsSL https://get.docker.com -o get-docker.sh | tee -a $LOGFILE
         sudo sh get-docker.sh | tee -a $LOGFILE
+        # 5. Очистка временных файлов после установки Docker
+        rm -f get-docker.sh
         sudo usermod -aG docker "$NEW_USER" | tee -a $LOGFILE
         # Проверка и устранение блокировок dpkg/apt
         if sudo fuser /var/lib/dpkg/lock >/dev/null 2>&1 || sudo fuser /var/lib/apt/lists/lock >/dev/null 2>&1; then
@@ -179,6 +213,10 @@ else
         if sudo test -f /var/lib/dpkg/lock-frontend || sudo test -f /var/lib/dpkg/lock; then
             echo "Обнаружена блокировка dpkg. Попытка исправить..." | tee -a $LOGFILE
             sudo dpkg --configure -a | tee -a $LOGFILE
+            # 4. Проверка успешности dpkg --configure -a
+            if [ $? -ne 0 ]; then
+                echo "Ошибка при выполнении dpkg --configure -a!" | tee -a $LOGFILE
+            fi
         fi
         # После установки Docker
         if command -v docker >/dev/null 2>&1; then
@@ -190,6 +228,10 @@ else
         echo
         echo "Устанавливаю docker-compose..." | tee -a $LOGFILE
         sudo apt-get install -y docker-compose | tee -a $LOGFILE
+        # 4. Проверка успешности установки docker-compose
+        if [ $? -ne 0 ]; then
+            echo "Ошибка при установке docker-compose!" | tee -a $LOGFILE
+        fi
         # Установка docker-compose
         if command -v docker-compose >/dev/null 2>&1; then
             echo "docker-compose установлен." | tee -a $LOGFILE
@@ -221,7 +263,12 @@ else
             sudo chmod 600 /swapfile | tee -a $LOGFILE
             sudo mkswap /swapfile | tee -a $LOGFILE
             sudo swapon /swapfile | tee -a $LOGFILE
-            echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab > /dev/null
+            # 12. Проверка наличия swap-файла в /etc/fstab перед добавлением
+            if ! grep -q '^/swapfile ' /etc/fstab; then
+                echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab > /dev/null
+            else
+                echo "Строка для swap уже есть в /etc/fstab, пропускаю добавление." | tee -a $LOGFILE
+            fi
             echo "Swap-файл создан и активирован." | tee -a $LOGFILE
         else
             echo "Swap-файл не будет создан." | tee -a $LOGFILE
@@ -299,6 +346,43 @@ echo "Удаляю неиспользуемые пакеты и очищаю к�
 sudo apt autoremove -y | tee -a $LOGFILE
 sudo apt clean | tee -a $LOGFILE
 echo "Система очищена." | tee -a $LOGFILE 
+
+# 10. Финальный чек-лист/резюме
+
+# Получение информации для резюме
+CREATED_USER_MSG="Пользователь не создавался (используется root)"
+if [ "$NEW_USER" != "root" ]; then
+  CREATED_USER_MSG="Создан пользователь: $NEW_USER (в группе sudo)"
+fi
+
+OPEN_PORTS=$(sudo ss -tulnp | grep LISTEN | awk '{print $5}' | awk -F: '{print $NF}' | sort -u | tr '\n' ',' | sed 's/,$//')
+
+UFW_STATUS=$(sudo ufw status | head -n 1)
+
+echo
+echo "=== Итоговая информация ===" | tee -a $LOGFILE
+echo "$CREATED_USER_MSG" | tee -a $LOGFILE
+if [ -n "$NEW_SSH_PORT" ]; then
+  echo "SSH-порт: $NEW_SSH_PORT" | tee -a $LOGFILE
+fi
+if command -v docker >/dev/null 2>&1; then
+  echo "Docker установлен" | tee -a $LOGFILE
+fi
+if command -v docker-compose >/dev/null 2>&1; then
+  echo "docker-compose установлен" | tee -a $LOGFILE
+fi
+if sudo swapon --show | grep -q '^'; then
+  echo "Swap активен" | tee -a $LOGFILE
+fi
+if dpkg -s ufw >/dev/null 2>&1; then
+  echo "UFW: $UFW_STATUS" | tee -a $LOGFILE
+fi
+if [ -n "$OPEN_PORTS" ]; then
+  echo "Открытые порты: $OPEN_PORTS" | tee -a $LOGFILE
+fi
+
+LOG_PATH=$(realpath $LOGFILE 2>/dev/null || echo "$LOGFILE")
+echo "Лог-файл: $LOG_PATH" | tee -a $LOGFILE
 
 echo
 echo "Установка и настройка завершена!" | tee -a $LOGFILE

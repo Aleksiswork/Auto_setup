@@ -1,0 +1,191 @@
+#!/bin/bash
+
+# =============================================
+# Опрос: в папку какого пользователя устанавливать n8n
+# =============================================
+
+# Получаем список пользователей с shell bash/sh
+USER_LIST=($(awk -F: '($7=="/bin/bash"||$7=="/bin/sh"){print $1}' /etc/passwd))
+
+if [ ${#USER_LIST[@]} -eq 0 ]; then
+  echo "В системе не найдено пользователей с shell /bin/bash или /bin/sh."
+  exit 1
+fi
+
+echo "Выберите пользователя, в папку которого будет установлена n8n:"
+for i in "${!USER_LIST[@]}"; do
+  idx=$((i+1))
+  echo "$idx. ${USER_LIST[$i]}"
+done
+
+read -p "Введите номер пользователя: " USER_NUM
+
+if ! [[ "$USER_NUM" =~ ^[0-9]+$ ]] || [ "$USER_NUM" -lt 1 ] || [ "$USER_NUM" -gt ${#USER_LIST[@]} ]; then
+  echo "Некорректный выбор!"
+  exit 1
+fi
+
+INSTALL_USER="${USER_LIST[$((USER_NUM-1))]}"
+echo "Выбран пользователь: $INSTALL_USER"
+
+# Переход в домашнюю папку выбранного пользователя
+USER_HOME=$(eval echo "~$INSTALL_USER")
+if [ ! -d "$USER_HOME" ]; then
+  echo "Домашняя папка пользователя $INSTALL_USER не найдена!"
+  exit 1
+fi
+cd "$USER_HOME"
+echo "Перешёл в папку: $USER_HOME"
+
+# Создание папки n8n-compose и переход в неё
+mkdir -p n8n-compose
+cd n8n-compose
+echo "Создана и выбрана папка: $(pwd)"
+
+# Устанавливаем владельца папки n8n-compose на выбранного пользователя
+cd "$USER_HOME"
+sudo chown -R "$INSTALL_USER:$INSTALL_USER" n8n-compose
+cd n8n-compose
+
+# Создание файла .env с правами выбранного пользователя и открытие его в nano
+sudo -u "$INSTALL_USER" touch .env
+sudo chown "$INSTALL_USER:$INSTALL_USER" .env
+
+# Запрос домена у пользователя
+read -p "Введите домен, который будет использоваться для n8n (например, n8n.example.com): " DOMAIN
+
+echo "Ваш домен: $DOMAIN"
+
+# Запрос email для SSL
+read -p "Введите email для SSL-сертификата: " SSL_EMAIL
+
+# Разделение домена на SUBDOMAIN и DOMAIN_NAME
+IFS='.' read -ra DOMAIN_PARTS <<< "$DOMAIN"
+PARTS_COUNT=${#DOMAIN_PARTS[@]}
+if [ $PARTS_COUNT -lt 2 ]; then
+  echo "Домен должен содержать хотя бы одну точку!"
+  exit 1
+fi
+DOMAIN_NAME="${DOMAIN_PARTS[$((PARTS_COUNT-1))]}"
+SUBDOMAIN="${DOMAIN_PARTS[0]}"
+if [ $PARTS_COUNT -gt 2 ]; then
+  for ((i=1; i<PARTS_COUNT-1; i++)); do
+    SUBDOMAIN+=".${DOMAIN_PARTS[$i]}"
+  done
+fi
+
+# Формируем блок для .env
+cat > .env <<EOF
+######################################
+# DOMAIN_NAME and SUBDOMAIN together determine where n8n will be reachable from
+# The top level domain to serve from
+DOMAIN_NAME=$DOMAIN_NAME
+
+# The subdomain to serve from
+SUBDOMAIN=$SUBDOMAIN
+
+# The above example serve n8n at: https://$DOMAIN
+
+# Optional timezone to set which gets used by Cron and other scheduling nodes
+# New York is the default value if not set
+GENERIC_TIMEZONE=Europe/Moscow
+
+# The email address to use for the TLS/SSL certificate creation
+SSL_EMAIL=$SSL_EMAIL
+######################################
+EOF
+
+sudo chown "$INSTALL_USER:$INSTALL_USER" .env
+
+# (Удалено) Открытие .env в nano от имени выбранного пользователя
+
+# Справка для пользователя
+ENV_PATH="$(pwd)/.env"
+
+echo
+# Создание папки local-files с правами выбранного пользователя
+mkdir -p local-files
+sudo chown "$INSTALL_USER:$INSTALL_USER" local-files
+
+echo "========================================="
+echo "Файл .env создан по пути: $ENV_PATH"
+echo "Для редактирования используйте команду:"
+echo "sudo -u $INSTALL_USER nano $ENV_PATH"
+echo "========================================="
+
+# Создание docker-compose.yml с правами выбранного пользователя и открытие его в nano
+sudo -u "$INSTALL_USER" touch docker-compose.yml
+sudo chown "$INSTALL_USER:$INSTALL_USER" docker-compose.yml
+cat > docker-compose.yml <<EOF
+#######################
+services:
+  traefik:
+    image: "traefik"
+    restart: always
+    command:
+      - "--api=true"
+      - "--api.insecure=true"
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.web.http.redirections.entryPoint.to=websecure"
+      - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
+      - "--entrypoints.websecure.address=:443"
+      - "--certificatesresolvers.mytlschallenge.acme.tlschallenge=true"
+      - "--certificatesresolvers.mytlschallenge.acme.email=${SSL_EMAIL}"
+      - "--certificatesresolvers.mytlschallenge.acme.storage=/letsencrypt/acme.json"
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - traefik_data:/letsencrypt
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+
+  n8n:
+    image: docker.n8n.io/n8nio/n8n
+    restart: always
+    ports:
+      - "127.0.0.1:5678:5678"
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.n8n.rule=Host(`$SUBDOMAIN.$DOMAIN_NAME`)
+      - traefik.http.routers.n8n.tls=true
+      - traefik.http.routers.n8n.entrypoints=web,websecure
+      - traefik.http.routers.n8n.tls.certresolver=mytlschallenge
+      - traefik.http.middlewares.n8n.headers.SSLRedirect=true
+      - traefik.http.middlewares.n8n.headers.STSSeconds=315360000
+      - traefik.http.middlewares.n8n.headers.browserXSSFilter=true
+      - traefik.http.middlewares.n8n.headers.contentTypeNosniff=true
+      - traefik.http.middlewares.n8n.headers.forceSTSHeader=true
+      - traefik.http.middlewares.n8n.headers.SSLHost=${DOMAIN_NAME}
+      - traefik.http.middlewares.n8n.headers.STSIncludeSubdomains=true
+      - traefik.http.middlewares.n8n.headers.STSPreload=true
+      - traefik.http.routers.n8n.middlewares=n8n@docker
+    environment:
+      - N8N_HOST=$SUBDOMAIN.$DOMAIN_NAME
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=https
+      - NODE_ENV=production
+      - WEBHOOK_URL=https://$SUBDOMAIN.$DOMAIN_NAME/
+      - GENERIC_TIMEZONE=${GENERIC_TIMEZONE}
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./local-files:/files
+
+volumes:
+  n8n_data:
+  traefik_data:
+#######################
+EOF
+
+# Запуск контейнеров
+sudo docker compose up -d
+
+echo
+echo "========================================="
+echo "Установка завершена! Все должно работать."
+echo "Текущие запущенные контейнеры:" 
+sudo docker ps
+echo "========================================="
+
+# Здесь будет дальнейшая логика установки n8n для $INSTALL_USER

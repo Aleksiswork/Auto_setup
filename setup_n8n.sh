@@ -115,9 +115,11 @@ if [ "$INSTALL_N8N" = "1" ] || [ "$INSTALL_REDIS" = "1" ] || [ "$INSTALL_POSTGRE
 fi
 
 # Автоматически пересоздаём папку n8n-compose
-rm -rf n8n-compose
-mkdir -p n8n-compose || { echo "Ошибка при создании папки n8n-compose" | tee -a $LOGFILE; exit 1; }
-sudo chown -R "$INSTALL_USER:$INSTALL_USER" n8n-compose
+if [ "$INSTALL_N8N" = "1" ]; then
+  rm -rf n8n-compose
+  mkdir -p n8n-compose || { echo "Ошибка при создании папки n8n-compose" | tee -a $LOGFILE; exit 1; }
+  sudo chown -R "$INSTALL_USER:$INSTALL_USER" n8n-compose
+fi
 cd n8n-compose || { echo "Не удалось перейти в папку n8n-compose" | tee -a $LOGFILE; exit 1; }
 sudo chown -R "$INSTALL_USER:$INSTALL_USER" .
 echo "Перешёл в папку: $USER_HOME" | tee -a $LOGFILE

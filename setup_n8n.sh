@@ -190,20 +190,6 @@ if [ "$INSTALL_N8N" = "1" ]; then
   ######################################
 EOF
 
-  # Добавляем блок Postgres только если выбран пункт 3 или 0
-  if [ "$INSTALL_POSTGRES" = "1" ]; then
-    cat >> .env <<EOF
-  DB_TYPE=postgresdb
-  DB_POSTGRESDB_DATABASE=n8n
-  DB_POSTGRESDB_HOST=postgres
-  DB_POSTGRESDB_PORT=5432
-  DB_POSTGRESDB_USER=n8n
-  DB_POSTGRESDB_PASSWORD=n8n
-  DB_POSTGRESDB_SCHEMA=public
-  ######################################
-EOF
-  fi
-
   sudo chown "$INSTALL_USER:$INSTALL_USER" .env
   ENV_PATH="$(pwd)/.env"
 
@@ -296,6 +282,20 @@ EOF
   echo "Текущие запущенные контейнеры:" | tee -a $LOGFILE
   sudo docker ps | tee -a $LOGFILE
   echo "=========================================" | tee -a $LOGFILE
+fi
+
+# Добавляем блок Postgres только если выбран пункт 3 или 0
+if [ "$INSTALL_POSTGRES" = "1" ]; then
+  cat >> n8n-compose/.env <<EOF
+DB_TYPE=postgresdb
+DB_POSTGRESDB_DATABASE=n8n
+DB_POSTGRESDB_HOST=postgres
+DB_POSTGRESDB_PORT=5432
+DB_POSTGRESDB_USER=n8n
+DB_POSTGRESDB_PASSWORD=n8n
+DB_POSTGRESDB_SCHEMA=public
+######################################
+EOF
 fi
 
 # Пункт 2: установка Redis

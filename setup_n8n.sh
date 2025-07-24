@@ -122,6 +122,33 @@ cd n8n-compose || { echo "Не удалось перейти в папку n8n-c
 sudo chown -R "$INSTALL_USER:$INSTALL_USER" .
 echo "Перешёл в папку: $USER_HOME" | tee -a $LOGFILE
 
+# Запрашиваем у пользователя необходимые значения для .env
+read -p "Введите домен (например, example.com): " DOMAIN_NAME
+read -p "Введите поддомен (например, n8n): " SUBDOMAIN
+read -p "Введите email для SSL: " SSL_EMAIL
+read -p "Введите таймзону (например, Europe/Moscow): " GENERIC_TIMEZONE
+
+DOMAIN_NAME=${DOMAIN_NAME:-example.com}
+SUBDOMAIN=${SUBDOMAIN:-n8n}
+SSL_EMAIL=${SSL_EMAIL:-admin@example.com}
+GENERIC_TIMEZONE=${GENERIC_TIMEZONE:-Europe/Moscow}
+
+# Создаём .env с введёнными или дефолтными переменными
+cat > .env <<EOF
+######################################
+DOMAIN_NAME=$DOMAIN_NAME
+SUBDOMAIN=$SUBDOMAIN
+GENERIC_TIMEZONE=$GENERIC_TIMEZONE
+SSL_EMAIL=$SSL_EMAIL
+######################################
+EOF
+
+# Проверка успешного создания .env
+if [ ! -f .env ] || [ ! -w .env ]; then
+  echo "Ошибка: файл .env не был создан или недоступен для записи!" | tee -a $LOGFILE
+  exit 1
+fi
+
 # Создаём файлы без подтверждения
 sudo -u "$INSTALL_USER" touch docker-compose.yml
 sudo chown "$INSTALL_USER:$INSTALL_USER" docker-compose.yml

@@ -36,7 +36,7 @@ done
 while true; do
   echo
   echo "Выберите действие:"
-  echo "1. Установка N8N"
+  echo "1. Установка N8N (без Postgres и Redis)"
   echo "2. Установка Redis"
   echo "3. Установка Postgres"
   echo "0. Выполнить все пункты"
@@ -73,6 +73,22 @@ while true; do
   esac
   break
 done
+
+# Проверка docker/docker compose только если выбран пункт 1, 2, 3 или 0
+if [ "$INSTALL_N8N" = "1" ] || [ "$INSTALL_REDIS" = "1" ] || [ "$INSTALL_POSTGRES" = "1" ]; then
+  if [ "$EUID" -ne 0 ]; then
+    echo "Пожалуйста, запустите скрипт с root-правами (sudo)!" | tee -a $LOGFILE
+    exit 1
+  fi
+  if ! command -v docker &> /dev/null; then
+    echo "Docker не установлен! Установите Docker и повторите запуск." | tee -a $LOGFILE
+    exit 1
+  fi
+  if ! docker compose version &> /dev/null; then
+    echo "Docker Compose не установлен или не интегрирован с docker! Установите docker compose plugin." | tee -a $LOGFILE
+    exit 1
+  fi
+fi
 
 # Получаем список пользователей с shell bash/sh
 USER_LIST=($(awk -F: '($7=="/bin/bash"||$7=="/bin/sh"){print $1}' /etc/passwd))
@@ -121,50 +137,52 @@ cd "$USER_HOME"
 sudo chown -R "$INSTALL_USER:$INSTALL_USER" n8n-compose
 cd n8n-compose
 
-# Проверка существования .env
-if [ -f .env ]; then
-  read -p ".env уже существует. Перезаписать? (y/n): " OVERWRITE
-  [[ "$OVERWRITE" =~ ^[yY]$ ]] || exit 1
-fi
-
-# Ввод домена с повтором при ошибке
-while true; do
-  read -p "Введите домен, который будет использоваться для n8n (например, n8n.example.com): " DOMAIN
-  if [[ "$DOMAIN" =~ ^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]]; then
-    break
-  else
-    echo "Некорректный домен, попробуйте снова." | tee -a $LOGFILE
+# Пункт 1: установка N8N (и 0 — все пункты)
+if [ "$INSTALL_N8N" = "1" ]; then
+  # Проверка существования .env
+  if [ -f .env ]; then
+    read -p ".env уже существует. Перезаписать? (y/n): " OVERWRITE
+    [[ "$OVERWRITE" =~ ^[yY]$ ]] || exit 1
   fi
-done
 
-echo "Ваш домен: $DOMAIN" | tee -a $LOGFILE
-
-# Ввод email с повтором при ошибке
-while true; do
-  read -p "Введите email для SSL-сертификата: " SSL_EMAIL
-  if [[ "$SSL_EMAIL" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$ ]]; then
-    break
-  else
-    echo "Некорректный email, попробуйте снова." | tee -a $LOGFILE
-  fi
-done
-
-# Разделение домена на SUBDOMAIN и DOMAIN_NAME
-IFS='.' read -ra DOMAIN_PARTS <<< "$DOMAIN"
-PARTS_COUNT=${#DOMAIN_PARTS[@]}
-if [ $PARTS_COUNT -lt 2 ]; then
-  echo "Домен должен содержать хотя бы одну точку!" | tee -a $LOGFILE
-  exit 1
-fi
-DOMAIN_NAME="${DOMAIN_PARTS[$((PARTS_COUNT-1))]}"
-SUBDOMAIN="${DOMAIN_PARTS[0]}"
-if [ $PARTS_COUNT -gt 2 ]; then
-  for ((i=1; i<PARTS_COUNT-1; i++)); do
-    SUBDOMAIN+=".${DOMAIN_PARTS[$i]}"
+  # Ввод домена с повтором при ошибке
+  while true; do
+    read -p "Введите домен, который будет использоваться для n8n (например, n8n.example.com): " DOMAIN
+    if [[ "$DOMAIN" =~ ^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]]; then
+      break
+    else
+      echo "Некорректный домен, попробуйте снова." | tee -a $LOGFILE
+    fi
   done
-fi
 
-cat > .env <<EOF
+  echo "Ваш домен: $DOMAIN" | tee -a $LOGFILE
+
+  # Ввод email с повтором при ошибке
+  while true; do
+    read -p "Введите email для SSL-сертификата: " SSL_EMAIL
+    if [[ "$SSL_EMAIL" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$ ]]; then
+      break
+    else
+      echo "Некорректный email, попробуйте снова." | tee -a $LOGFILE
+    fi
+  done
+
+  # Разделение домена на SUBDOMAIN и DOMAIN_NAME
+  IFS='.' read -ra DOMAIN_PARTS <<< "$DOMAIN"
+  PARTS_COUNT=${#DOMAIN_PARTS[@]}
+  if [ $PARTS_COUNT -lt 2 ]; then
+    echo "Домен должен содержать хотя бы одну точку!" | tee -a $LOGFILE
+    exit 1
+  fi
+  DOMAIN_NAME="${DOMAIN_PARTS[$((PARTS_COUNT-1))]}"
+  SUBDOMAIN="${DOMAIN_PARTS[0]}"
+  if [ $PARTS_COUNT -gt 2 ]; then
+    for ((i=1; i<PARTS_COUNT-1; i++)); do
+      SUBDOMAIN+=".${DOMAIN_PARTS[$i]}"
+    done
+  fi
+
+  cat > .env <<EOF
 ######################################
 DOMAIN_NAME=$DOMAIN_NAME
 SUBDOMAIN=$SUBDOMAIN
@@ -180,27 +198,28 @@ DB_POSTGRESDB_SCHEMA=public
 ######################################
 EOF
 
-sudo chown "$INSTALL_USER:$INSTALL_USER" .env
-ENV_PATH="$(pwd)/.env"
+  sudo chown "$INSTALL_USER:$INSTALL_USER" .env
+  ENV_PATH="$(pwd)/.env"
 
-mkdir -p local-files
-sudo chown "$INSTALL_USER:$INSTALL_USER" local-files
+  mkdir -p local-files
+  sudo chown "$INSTALL_USER:$INSTALL_USER" local-files
 
-echo "=========================================" | tee -a $LOGFILE
-echo "Файл .env создан по пути: $ENV_PATH" | tee -a $LOGFILE
-echo "Для редактирования используйте команду:" | tee -a $LOGFILE
-echo "sudo -u $INSTALL_USER nano $ENV_PATH" | tee -a $LOGFILE
-echo "=========================================" | tee -a $LOGFILE
+  echo "=========================================" | tee -a $LOGFILE
+  echo "Файл .env создан по пути: $ENV_PATH" | tee -a $LOGFILE
+  echo "Для редактирования используйте команду:" | tee -a $LOGFILE
+  echo "sudo -u $INSTALL_USER nano $ENV_PATH" | tee -a $LOGFILE
+  echo "=========================================" | tee -a $LOGFILE
 
-# Проверка существования docker-compose.yml
-if [ -f docker-compose.yml ]; then
-  read -p "docker-compose.yml уже существует. Перезаписать? (y/n): " OVERWRITE
-  [[ "$OVERWRITE" =~ ^[yY]$ ]] || exit 1
-fi
+  # Проверка существования docker-compose.yml
+  if [ -f docker-compose.yml ]; then
+    read -p "docker-compose.yml уже существует. Перезаписать? (y/n): " OVERWRITE
+    [[ "$OVERWRITE" =~ ^[yY]$ ]] || exit 1
+  fi
 
-sudo -u "$INSTALL_USER" touch docker-compose.yml
-sudo chown "$INSTALL_USER:$INSTALL_USER" docker-compose.yml
-cat > docker-compose.yml <<EOF
+  # Создание docker-compose.yml с правами выбранного пользователя
+  sudo -u "$INSTALL_USER" touch docker-compose.yml
+  sudo chown "$INSTALL_USER:$INSTALL_USER" docker-compose.yml
+  cat > docker-compose.yml <<'EOF'
 #######################
 services:
   traefik:
@@ -262,53 +281,158 @@ volumes:
 #######################
 EOF
 
-# Опрос о необходимости Redis и Postgres
+  # Опрос о необходимости Redis и Postgres
 
-REDIS_BLOCK="  redis:\n    image: redis:7-alpine\n    restart: always\n    ports:\n      - \"6379:6379\"\n    volumes:\n      - redis_data:/data\n"
-POSTGRES_BLOCK="  postgres:\n    image: postgres:15-alpine\n    restart: always\n    environment:\n      - POSTGRES_USER=n8n\n      - POSTGRES_PASSWORD=n8n\n      - POSTGRES_DB=n8n\n    ports:\n      - \"5432:5432\"\n    volumes:\n      - postgres_data:/var/lib/postgresql/data\n"
+  REDIS_BLOCK="  redis:\n    image: redis:7-alpine\n    restart: always\n    ports:\n      - \"6379:6379\"\n    volumes:\n      - redis_data:/data\n"
+  POSTGRES_BLOCK="  postgres:\n    image: postgres:15-alpine\n    restart: always\n    environment:\n      - POSTGRES_USER=n8n\n      - POSTGRES_PASSWORD=n8n\n      - POSTGRES_DB=n8n\n    ports:\n      - \"5432:5432\"\n    volumes:\n      - postgres_data:/var/lib/postgresql/data\n"
 
-NEED_RESTART=0
-TMPFILE=""
-trap '[ -n "$TMPFILE" ] && rm -f "$TMPFILE"' EXIT
+  NEED_RESTART=0
+  TMPFILE=""
+  trap '[ -n "$TMPFILE" ] && rm -f "$TMPFILE"' EXIT
 
-if [[ "$INSTALL_REDIS" =~ ^([yY][eE][sS]?|[yY])$ ]] || [[ "$INSTALL_POSTGRES" =~ ^([yY][eE][sS]?|[yY])$ ]]; then
-  TMPFILE=$(mktemp)
-  INSERTED=0
-  while IFS= read -r line; do
-    echo "$line" >> "$TMPFILE"
-    if [[ $line =~ ^services: ]]; then
-      if [[ "$INSTALL_REDIS" =~ ^([yY][eE][sS]?|[yY])$ ]]; then
-        echo -e "$REDIS_BLOCK" >> "$TMPFILE"
-        NEED_RESTART=1
+  if [[ "$INSTALL_REDIS" =~ ^([yY][eE][sS]?|[yY])$ ]] || [[ "$INSTALL_POSTGRES" =~ ^([yY][eE][sS]?|[yY])$ ]]; then
+    TMPFILE=$(mktemp)
+    INSERTED=0
+    while IFS= read -r line; do
+      echo "$line" >> "$TMPFILE"
+      if [[ $line =~ ^services: ]]; then
+        if [[ "$INSTALL_REDIS" =~ ^([yY][eE][sS]?|[yY])$ ]]; then
+          echo -e "$REDIS_BLOCK" >> "$TMPFILE"
+          NEED_RESTART=1
+        fi
+        if [[ "$INSTALL_POSTGRES" =~ ^([yY][eE][sS]?|[yY])$ ]]; then
+          echo -e "$POSTGRES_BLOCK" >> "$TMPFILE"
+          NEED_RESTART=1
+        fi
+        INSERTED=1
       fi
-      if [[ "$INSTALL_POSTGRES" =~ ^([yY][eE][sS]?|[yY])$ ]]; then
-        echo -e "$POSTGRES_BLOCK" >> "$TMPFILE"
-        NEED_RESTART=1
-      fi
-      INSERTED=1
+    done < docker-compose.yml
+    mv "$TMPFILE" docker-compose.yml
+  fi
+
+  if [[ "$INSTALL_REDIS" =~ ^([yY][eE][sS]?|[yY])$ ]]; then
+    if ! grep -q 'redis_data:' docker-compose.yml; then
+      sed -i '/^volumes:/a \  redis_data:' docker-compose.yml
     fi
-  done < docker-compose.yml
-  mv "$TMPFILE" docker-compose.yml
-fi
-
-if [[ "$INSTALL_REDIS" =~ ^([yY][eE][sS]?|[yY])$ ]]; then
-  if ! grep -q 'redis_data:' docker-compose.yml; then
-    sed -i '/^volumes:/a \  redis_data:' docker-compose.yml
   fi
-fi
-if [[ "$INSTALL_POSTGRES" =~ ^([yY][eE][sS]?|[yY])$ ]]; then
-  if ! grep -q 'postgres_data:' docker-compose.yml; then
-    sed -i '/^volumes:/a \  postgres_data:' docker-compose.yml
+  if [[ "$INSTALL_POSTGRES" =~ ^([yY][eE][sS]?|[yY])$ ]]; then
+    if ! grep -q 'postgres_data:' docker-compose.yml; then
+      sed -i '/^volumes:/a \  postgres_data:' docker-compose.yml
+    fi
   fi
+
+  # Всегда перезапускаем контейнеры после формирования docker-compose.yml
+  sudo docker compose down || { echo "Ошибка при остановке контейнеров" | tee -a $LOGFILE; exit 1; }
+  sudo docker compose up -d || { echo "Ошибка при запуске контейнеров" | tee -a $LOGFILE; exit 1; }
+
+  echo
+  echo "=========================================" | tee -a $LOGFILE
+  echo "Установка завершена! Все должно работать." | tee -a $LOGFILE
+  echo "Текущие запущенные контейнеры:" | tee -a $LOGFILE
+  sudo docker ps | tee -a $LOGFILE
+  echo "=========================================" | tee -a $LOGFILE
 fi
 
-# Всегда перезапускаем контейнеры после формирования docker-compose.yml
-sudo docker compose down || { echo "Ошибка при остановке контейнеров" | tee -a $LOGFILE; exit 1; }
-sudo docker compose up -d || { echo "Ошибка при запуске контейнеров" | tee -a $LOGFILE; exit 1; }
+# Пункт 2: установка Redis
+if [ "$INSTALL_REDIS" = "1" ] && [ "$INSTALL_N8N" = "0" ]; then
+  if [ ! -f docker-compose.yml ]; then
+    echo "Файл docker-compose.yml не найден. Сначала выполните установку N8N (пункт 1), чтобы создать базовую структуру." | tee -a $LOGFILE
+    exit 1
+  fi
+  # Опрос о необходимости Redis и Postgres
 
-echo
-echo "=========================================" | tee -a $LOGFILE
-echo "Установка завершена! Все должно работать." | tee -a $LOGFILE
-echo "Текущие запущенные контейнеры:" | tee -a $LOGFILE
-sudo docker ps | tee -a $LOGFILE
-echo "=========================================" | tee -a $LOGFILE
+  REDIS_BLOCK="  redis:\n    image: redis:7-alpine\n    restart: always\n    ports:\n      - \"6379:6379\"\n    volumes:\n      - redis_data:/data\n"
+  POSTGRES_BLOCK="  postgres:\n    image: postgres:15-alpine\n    restart: always\n    environment:\n      - POSTGRES_USER=n8n\n      - POSTGRES_PASSWORD=n8n\n      - POSTGRES_DB=n8n\n    ports:\n      - \"5432:5432\"\n    volumes:\n      - postgres_data:/var/lib/postgresql/data\n"
+
+  NEED_RESTART=0
+  TMPFILE=""
+  trap '[ -n "$TMPFILE" ] && rm -f "$TMPFILE"' EXIT
+
+  if [[ "$INSTALL_REDIS" =~ ^([yY][eE][sS]?|[yY])$ ]] || [[ "$INSTALL_POSTGRES" =~ ^([yY][eE][sS]?|[yY])$ ]]; then
+    TMPFILE=$(mktemp)
+    INSERTED=0
+    while IFS= read -r line; do
+      echo "$line" >> "$TMPFILE"
+      if [[ $line =~ ^services: ]]; then
+        if [[ "$INSTALL_REDIS" =~ ^([yY][eE][sS]?|[yY])$ ]]; then
+          echo -e "$REDIS_BLOCK" >> "$TMPFILE"
+          NEED_RESTART=1
+        fi
+        if [[ "$INSTALL_POSTGRES" =~ ^([yY][eE][sS]?|[yY])$ ]]; then
+          echo -e "$POSTGRES_BLOCK" >> "$TMPFILE"
+          NEED_RESTART=1
+        fi
+        INSERTED=1
+      fi
+    done < docker-compose.yml
+    mv "$TMPFILE" docker-compose.yml
+  fi
+
+  if [[ "$INSTALL_REDIS" =~ ^([yY][eE][sS]?|[yY])$ ]]; then
+    if ! grep -q 'redis_data:' docker-compose.yml; then
+      sed -i '/^volumes:/a \  redis_data:' docker-compose.yml
+    fi
+  fi
+  if [[ "$INSTALL_POSTGRES" =~ ^([yY][eE][sS]?|[yY])$ ]]; then
+    if ! grep -q 'postgres_data:' docker-compose.yml; then
+      sed -i '/^volumes:/a \  postgres_data:' docker-compose.yml
+    fi
+  fi
+
+  # Всегда перезапускаем контейнеры после формирования docker-compose.yml
+  sudo docker compose down || { echo "Ошибка при остановке контейнеров" | tee -a $LOGFILE; exit 1; }
+  sudo docker compose up -d || { echo "Ошибка при запуске контейнеров" | tee -a $LOGFILE; exit 1; }
+  echo "Redis успешно добавлен и запущен." | tee -a $LOGFILE
+fi
+
+# Пункт 3: установка Postgres
+if [ "$INSTALL_POSTGRES" = "1" ] && [ "$INSTALL_N8N" = "0" ]; then
+  if [ ! -f docker-compose.yml ]; then
+    echo "Файл docker-compose.yml не найден. Сначала выполните установку N8N (пункт 1), чтобы создать базовую структуру." | tee -a $LOGFILE
+    exit 1
+  fi
+  # Опрос о необходимости Redis и Postgres
+
+  REDIS_BLOCK="  redis:\n    image: redis:7-alpine\n    restart: always\n    ports:\n      - \"6379:6379\"\n    volumes:\n      - redis_data:/data\n"
+  POSTGRES_BLOCK="  postgres:\n    image: postgres:15-alpine\n    restart: always\n    environment:\n      - POSTGRES_USER=n8n\n      - POSTGRES_PASSWORD=n8n\n      - POSTGRES_DB=n8n\n    ports:\n      - \"5432:5432\"\n    volumes:\n      - postgres_data:/var/lib/postgresql/data\n"
+
+  NEED_RESTART=0
+  TMPFILE=""
+  trap '[ -n "$TMPFILE" ] && rm -f "$TMPFILE"' EXIT
+
+  if [[ "$INSTALL_REDIS" =~ ^([yY][eE][sS]?|[yY])$ ]] || [[ "$INSTALL_POSTGRES" =~ ^([yY][eE][sS]?|[yY])$ ]]; then
+    TMPFILE=$(mktemp)
+    INSERTED=0
+    while IFS= read -r line; do
+      echo "$line" >> "$TMPFILE"
+      if [[ $line =~ ^services: ]]; then
+        if [[ "$INSTALL_REDIS" =~ ^([yY][eE][sS]?|[yY])$ ]]; then
+          echo -e "$REDIS_BLOCK" >> "$TMPFILE"
+          NEED_RESTART=1
+        fi
+        if [[ "$INSTALL_POSTGRES" =~ ^([yY][eE][sS]?|[yY])$ ]]; then
+          echo -e "$POSTGRES_BLOCK" >> "$TMPFILE"
+          NEED_RESTART=1
+        fi
+        INSERTED=1
+      fi
+    done < docker-compose.yml
+    mv "$TMPFILE" docker-compose.yml
+  fi
+
+  if [[ "$INSTALL_REDIS" =~ ^([yY][eE][sS]?|[yY])$ ]]; then
+    if ! grep -q 'redis_data:' docker-compose.yml; then
+      sed -i '/^volumes:/a \  redis_data:' docker-compose.yml
+    fi
+  fi
+  if [[ "$INSTALL_POSTGRES" =~ ^([yY][eE][sS]?|[yY])$ ]]; then
+    if ! grep -q 'postgres_data:' docker-compose.yml; then
+      sed -i '/^volumes:/a \  postgres_data:' docker-compose.yml
+    fi
+  fi
+
+  # Всегда перезапускаем контейнеры после формирования docker-compose.yml
+  sudo docker compose down || { echo "Ошибка при остановке контейнеров" | tee -a $LOGFILE; exit 1; }
+  sudo docker compose up -d || { echo "Ошибка при запуске контейнеров" | tee -a $LOGFILE; exit 1; }
+  echo "Postgres успешно добавлен и запущен." | tee -a $LOGFILE
+fi

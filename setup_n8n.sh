@@ -85,103 +85,89 @@ fi
 # Получаем список пользователей с shell bash/sh
 USER_LIST=($(awk -F: '($7=="/bin/bash"||$7=="/bin/sh"){print $1}' /etc/passwd))
 
-if [ "$INSTALL_N8N" = "1" ]; then
-  # Проверка портов 80, 443, 5678 только при установке N8N
-  for PORT in 80 443 5678; do
-    if lsof -i :$PORT -sTCP:LISTEN -t >/dev/null ; then
-      echo "Порт $PORT уже занят! Освободите порт и повторите запуск." | tee -a $LOGFILE
-      exit 1
-    fi
+if [ ${#USER_LIST[@]} -eq 0 ]; then
+  echo "В системе не найдено пользователей с shell /bin/bash или /bin/sh." | tee -a $LOGFILE
+  exit 1
+fi
+
+while true; do
+  echo "Выберите пользователя, для которого будет производиться установка:" 
+  for i in "${!USER_LIST[@]}"; do
+    idx=$((i+1))
+    echo "$idx. ${USER_LIST[$i]}"
   done
-
-  if [ ${#USER_LIST[@]} -eq 0 ]; then
-    echo "В системе не найдено пользователей с shell /bin/bash или /bin/sh." | tee -a $LOGFILE
-    exit 1
+  read -p "Введите номер пользователя: " USER_NUM
+  if ! [[ "$USER_NUM" =~ ^[0-9]+$ ]] || [ "$USER_NUM" -lt 1 ] || [ "$USER_NUM" -gt ${#USER_LIST[@]} ]; then
+    echo "Некорректный выбор! Попробуйте снова." | tee -a $LOGFILE
+  else
+    break
   fi
+done
 
-  while true; do
-    echo "Выберите пользователя, в папку которого будет установлена n8n:"
-    for i in "${!USER_LIST[@]}"; do
-      idx=$((i+1))
-      echo "$idx. ${USER_LIST[$i]}"
-    done
-    read -p "Введите номер пользователя: " USER_NUM
-    if ! [[ "$USER_NUM" =~ ^[0-9]+$ ]] || [ "$USER_NUM" -lt 1 ] || [ "$USER_NUM" -gt ${#USER_LIST[@]} ]; then
-      echo "Некорректный выбор! Попробуйте снова." | tee -a $LOGFILE
-    else
-      break
-    fi
+INSTALL_USER="${USER_LIST[$((USER_NUM-1))]}"
+echo "Выбран пользователь: $INSTALL_USER" | tee -a $LOGFILE
+USER_HOME=$(eval echo "~$INSTALL_USER")
+if [ ! -d "$USER_HOME" ]; then
+  echo "Домашняя папка пользователя $INSTALL_USER не найдена! Проверьте корректность пользователя." | tee -a $LOGFILE
+  exit 1
+fi
+cd "$USER_HOME" || { echo "Не удалось перейти в домашнюю папку!" | tee -a $LOGFILE; exit 1; }
+echo "Перешёл в папку: $USER_HOME" | tee -a $LOGFILE
+
+# Создание папки n8n-compose и переход в неё
+if [ -d n8n-compose ]; then
+  read -p "Папка n8n-compose уже существует. Перезаписать содержимое? (y/n): " OVERWRITE
+  [[ "$OVERWRITE" =~ ^[yY]$ ]] || exit 1
+  rm -rf n8n-compose
+fi
+mkdir -p n8n-compose || { echo "Ошибка при создании папки n8n-compose" | tee -a $LOGFILE; exit 1; }
+cd n8n-compose || { echo "Не удалось перейти в папку n8n-compose" | tee -a $LOGFILE; exit 1; }
+echo "Создана и выбрана папка: $(pwd)" | tee -a $LOGFILE
+
+# Проверка существования .env
+if [ -f .env ]; then
+  read -p ".env уже существует. Перезаписать? (y/n): " OVERWRITE
+  [[ "$OVERWRITE" =~ ^[yY]$ ]] || exit 1
+fi
+
+# Ввод домена с повтором при ошибке
+while true; do
+  read -p "Введите домен, который будет использоваться для n8n (например, n8n.example.com): " DOMAIN
+  if [[ "$DOMAIN" =~ ^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]]; then
+    break
+  else
+    echo "Некорректный домен, попробуйте снова." | tee -a $LOGFILE
+  fi
+done
+
+echo "Ваш домен: $DOMAIN" | tee -a $LOGFILE
+
+# Ввод email с повтором при ошибке
+while true; do
+  read -p "Введите email для SSL-сертификата: " SSL_EMAIL
+  if [[ "$SSL_EMAIL" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$ ]]; then
+    break
+  else
+    echo "Некорректный email, попробуйте снова." | tee -a $LOGFILE
+  fi
+done
+
+# Разделение домена на SUBDOMAIN и DOMAIN_NAME
+IFS='.' read -ra DOMAIN_PARTS <<< "$DOMAIN"
+PARTS_COUNT=${#DOMAIN_PARTS[@]}
+if [ $PARTS_COUNT -lt 2 ]; then
+  echo "Домен должен содержать хотя бы одну точку!" | tee -a $LOGFILE
+  exit 1
+fi
+DOMAIN_NAME="${DOMAIN_PARTS[$((PARTS_COUNT-1))]}"
+SUBDOMAIN="${DOMAIN_PARTS[0]}"
+if [ $PARTS_COUNT -gt 2 ]; then
+  for ((i=1; i<PARTS_COUNT-1; i++)); do
+    SUBDOMAIN+=".${DOMAIN_PARTS[$i]}"
   done
+fi
 
-  INSTALL_USER="${USER_LIST[$((USER_NUM-1))]}"
-  echo "Выбран пользователь: $INSTALL_USER" | tee -a $LOGFILE
-
-  USER_HOME=$(eval echo "~$INSTALL_USER")
-  if [ ! -d "$USER_HOME" ]; then
-    echo "Домашняя папка пользователя $INSTALL_USER не найдена! Проверьте корректность пользователя." | tee -a $LOGFILE
-    exit 1
-  fi
-  cd "$USER_HOME" || { echo "Не удалось перейти в домашнюю папку!" | tee -a $LOGFILE; exit 1; }
-  echo "Перешёл в папку: $USER_HOME" | tee -a $LOGFILE
-
-  # Создание папки n8n-compose и переход в неё
-  if [ -d n8n-compose ]; then
-    read -p "Папка n8n-compose уже существует. Перезаписать содержимое? (y/n): " OVERWRITE
-    [[ "$OVERWRITE" =~ ^[yY]$ ]] || exit 1
-    rm -rf n8n-compose
-  fi
-  mkdir -p n8n-compose || { echo "Ошибка при создании папки n8n-compose" | tee -a $LOGFILE; exit 1; }
-  cd n8n-compose || { echo "Не удалось перейти в папку n8n-compose" | tee -a $LOGFILE; exit 1; }
-  echo "Создана и выбрана папка: $(pwd)" | tee -a $LOGFILE
-
-  cd "$USER_HOME"
-  sudo chown -R "$INSTALL_USER:$INSTALL_USER" n8n-compose
-  cd n8n-compose
-
-  # Проверка существования .env
-  if [ -f .env ]; then
-    read -p ".env уже существует. Перезаписать? (y/n): " OVERWRITE
-    [[ "$OVERWRITE" =~ ^[yY]$ ]] || exit 1
-  fi
-
-  # Ввод домена с повтором при ошибке
-  while true; do
-    read -p "Введите домен, который будет использоваться для n8n (например, n8n.example.com): " DOMAIN
-    if [[ "$DOMAIN" =~ ^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]]; then
-      break
-    else
-      echo "Некорректный домен, попробуйте снова." | tee -a $LOGFILE
-    fi
-  done
-
-  echo "Ваш домен: $DOMAIN" | tee -a $LOGFILE
-
-  # Ввод email с повтором при ошибке
-  while true; do
-    read -p "Введите email для SSL-сертификата: " SSL_EMAIL
-    if [[ "$SSL_EMAIL" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$ ]]; then
-      break
-    else
-      echo "Некорректный email, попробуйте снова." | tee -a $LOGFILE
-    fi
-  done
-
-  # Разделение домена на SUBDOMAIN и DOMAIN_NAME
-  IFS='.' read -ra DOMAIN_PARTS <<< "$DOMAIN"
-  PARTS_COUNT=${#DOMAIN_PARTS[@]}
-  if [ $PARTS_COUNT -lt 2 ]; then
-    echo "Домен должен содержать хотя бы одну точку!" | tee -a $LOGFILE
-    exit 1
-  fi
-  DOMAIN_NAME="${DOMAIN_PARTS[$((PARTS_COUNT-1))]}"
-  SUBDOMAIN="${DOMAIN_PARTS[0]}"
-  if [ $PARTS_COUNT -gt 2 ]; then
-    for ((i=1; i<PARTS_COUNT-1; i++)); do
-      SUBDOMAIN+=".${DOMAIN_PARTS[$i]}"
-    done
-  fi
-
-  cat > .env <<EOF
+cat > .env <<EOF
   ######################################
   DOMAIN_NAME=$DOMAIN_NAME
   SUBDOMAIN=$SUBDOMAIN
@@ -190,27 +176,27 @@ if [ "$INSTALL_N8N" = "1" ]; then
   ######################################
 EOF
 
-  sudo chown "$INSTALL_USER:$INSTALL_USER" .env
-  ENV_PATH="$(pwd)/.env"
+sudo chown "$INSTALL_USER:$INSTALL_USER" .env
+ENV_PATH="$(pwd)/.env"
 
-  mkdir -p local-files
-  sudo chown "$INSTALL_USER:$INSTALL_USER" local-files
+mkdir -p local-files
+sudo chown "$INSTALL_USER:$INSTALL_USER" local-files
 
-  echo "=========================================" | tee -a $LOGFILE
-  echo "Файл .env создан по пути: $ENV_PATH" | tee -a $LOGFILE
-  echo "Для редактирования используйте команду:" | tee -a $LOGFILE
-  echo "sudo -u $INSTALL_USER nano $ENV_PATH" | tee -a $LOGFILE
-  echo "=========================================" | tee -a $LOGFILE
+echo "=========================================" | tee -a $LOGFILE
+echo "Файл .env создан по пути: $ENV_PATH" | tee -a $LOGFILE
+echo "Для редактирования используйте команду:" | tee -a $LOGFILE
+echo "sudo -u $INSTALL_USER nano $ENV_PATH" | tee -a $LOGFILE
+echo "=========================================" | tee -a $LOGFILE
 
-  # Проверка существования docker-compose.yml
-  if [ -f docker-compose.yml ]; then
-    read -p "docker-compose.yml уже существует. Перезаписать? (y/n): " OVERWRITE
-    [[ "$OVERWRITE" =~ ^[yY]$ ]] || exit 1
-  fi
+# Проверка существования docker-compose.yml
+if [ -f docker-compose.yml ]; then
+  read -p "docker-compose.yml уже существует. Перезаписать? (y/n): " OVERWRITE
+  [[ "$OVERWRITE" =~ ^[yY]$ ]] || exit 1
+fi
 
-  sudo -u "$INSTALL_USER" touch docker-compose.yml
-  sudo chown "$INSTALL_USER:$INSTALL_USER" docker-compose.yml
-  cat > docker-compose.yml <<'EOF'
+sudo -u "$INSTALL_USER" touch docker-compose.yml
+sudo chown "$INSTALL_USER:$INSTALL_USER" docker-compose.yml
+cat > docker-compose.yml <<'EOF'
   #######################
   services:
     traefik:
@@ -272,37 +258,26 @@ EOF
 #######################
 EOF
 
-  # Всегда перезапускаем контейнеры после формирования docker-compose.yml
-  sudo docker compose down || { echo "Ошибка при остановке контейнеров" | tee -a $LOGFILE; exit 1; }
-  sudo docker compose up -d || { echo "Ошибка при запуске контейнеров" | tee -a $LOGFILE; exit 1; }
+# Всегда перезапускаем контейнеры после формирования docker-compose.yml
+sudo docker compose down || { echo "Ошибка при остановке контейнеров" | tee -a $LOGFILE; exit 1; }
+sudo docker compose up -d || { echo "Ошибка при запуске контейнеров" | tee -a $LOGFILE; exit 1; }
 
-  echo
-  echo "=========================================" | tee -a $LOGFILE
-  echo "Установка завершена! Все должно работать." | tee -a $LOGFILE
-  echo "Текущие запущенные контейнеры:" | tee -a $LOGFILE
-  sudo docker ps | tee -a $LOGFILE
-  echo "=========================================" | tee -a $LOGFILE
-fi
+echo
+echo "=========================================" | tee -a $LOGFILE
+echo "Установка завершена! Все должно работать." | tee -a $LOGFILE
+echo "Текущие запущенные контейнеры:" | tee -a $LOGFILE
+sudo docker ps | tee -a $LOGFILE
+echo "=========================================" | tee -a $LOGFILE
 
 # Добавляем блок Postgres только если выбран пункт 3 или 0
 if [ "$INSTALL_POSTGRES" = "1" ]; then
-  # Ищем все .env в n8n-compose в /home
-  N8N_ENVS=($(find /home -type f -path '*/n8n-compose/.env' 2>/dev/null))
-
-  if [ ${#N8N_ENVS[@]} -eq 0 ]; then
-    echo "Файл n8n-compose/.env не найден ни в одном домашнем каталоге! Сначала выполните установку N8N (пункт 1)." | tee -a $LOGFILE
+  # Везде далее используем относительные пути n8n-compose/.env и n8n-compose для выбранного пользователя
+  # Поиск n8n-compose/.env для доустановки сервисов — только в $USER_HOME
+  if [ ! -d "n8n-compose" ] || [ ! -f "n8n-compose/.env" ]; then
+    echo "Каталог n8n-compose или файл .env не найдены в домашней папке пользователя $INSTALL_USER! Сначала выполните установку N8N (пункт 1)." | tee -a $LOGFILE
     exit 1
-  elif [ ${#N8N_ENVS[@]} -eq 1 ]; then
-    N8N_ENV_PATH="${N8N_ENVS[0]}"
-  else
-    echo "Найдено несколько файлов n8n-compose/.env:"
-    select N8N_ENV_PATH in "${N8N_ENVS[@]}"; do
-      [ -n "$N8N_ENV_PATH" ] && break
-      echo "Некорректный выбор!"
-    done
   fi
-
-  cat >> "$N8N_ENV_PATH" <<EOF
+  cat >> n8n-compose/.env <<EOF
 DB_TYPE=postgresdb
 DB_POSTGRESDB_DATABASE=n8n
 DB_POSTGRESDB_HOST=postgres

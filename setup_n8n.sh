@@ -269,8 +269,8 @@ EOF
   volumes:
     n8n_data:
     traefik_data:
-  #######################
-  EOF
+#######################
+EOF
 
   # Всегда перезапускаем контейнеры после формирования docker-compose.yml
   sudo docker compose down || { echo "Ошибка при остановке контейнеров" | tee -a $LOGFILE; exit 1; }

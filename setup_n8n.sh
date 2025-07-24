@@ -250,16 +250,124 @@ if [ "$INSTALL_POSTGRES" = "1" ]; then
     echo "Файл .env или docker-compose.yml не найден. Сначала выполните установку N8N (пункт 1)." | tee -a $LOGFILE
     exit 1
   fi
+
+  # Добавляем переменные в .env
   cat >> .env <<EOF
-DB_TYPE=postgresdb
-DB_POSTGRESDB_DATABASE=n8n
-DB_POSTGRESDB_HOST=postgres
-DB_POSTGRESDB_PORT=5432
-DB_POSTGRESDB_USER=n8n
-DB_POSTGRESDB_PASSWORD=n8n
-DB_POSTGRESDB_SCHEMA=public
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=postgres
+POSTGRES_DB=n8n
+POSTGRES_NON_ROOT_USER=n8n
+POSTGRES_NON_ROOT_PASSWORD=n8n
 ######################################
 EOF
+
+  # Перезаписываем docker-compose.yml с учётом postgres и всех зависимостей
+  echo "Обновляю docker-compose.yml с поддержкой Postgres..." | tee -a $LOGFILE
+  cat > docker-compose.yml <<'EOF'
+#######################
+services:
+  postgres:
+    image: postgres:16
+    restart: always
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_NON_ROOT_USER=${POSTGRES_NON_ROOT_USER}
+      - POSTGRES_NON_ROOT_PASSWORD=${POSTGRES_NON_ROOT_PASSWORD}
+    volumes:
+      - db_storage:/var/lib/postgresql/data
+      - ./init-data.sh:/docker-entrypoint-initdb.d/init-data.sh
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -h localhost -U ${POSTGRES_USER} -d ${POSTGRES_DB}']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  traefik:
+    image: "traefik"
+    restart: always
+    command:
+      - "--api=true"
+      - "--api.insecure=true"
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.web.http.redirections.entryPoint.to=websecure"
+      - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
+      - "--entrypoints.websecure.address=:443"
+      - "--certificatesresolvers.mytlschallenge.acme.tlschallenge=true"
+      - "--certificatesresolvers.mytlschallenge.acme.email=${SSL_EMAIL}"
+      - "--certificatesresolvers.mytlschallenge.acme.storage=/letsencrypt/acme.json"
+    ports:
+      - "80:80"
+      - "443:443"
+      - "5688:5688"
+    volumes:
+      - traefik_data:/letsencrypt
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+
+  n8n:
+    image: docker.n8n.io/n8nio/n8n
+    restart: always
+    ports:
+      - "127.0.0.1:5678:5678"
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.n8n.rule=Host(`$SUBDOMAIN.$DOMAIN_NAME`)
+      - traefik.http.routers.n8n.tls=true
+      - traefik.http.routers.n8n.entrypoints=web,websecure
+      - traefik.http.routers.n8n.tls.certresolver=mytlschallenge
+      - traefik.http.middlewares.n8n.headers.SSLRedirect=true
+      - traefik.http.middlewares.n8n.headers.STSSeconds=315360000
+      - traefik.http.middlewares.n8n.headers.browserXSSFilter=true
+      - traefik.http.middlewares.n8n.headers.contentTypeNosniff=true
+      - traefik.http.middlewares.n8n.headers.forceSTSHeader=true
+      - traefik.http.middlewares.n8n.headers.SSLHost=${DOMAIN_NAME}
+      - traefik.http.middlewares.n8n.headers.STSIncludeSubdomains=true
+      - traefik.http.middlewares.n8n.headers.STSPreload=true
+      - traefik.http.routers.n8n.middlewares=n8n@docker
+    environment:
+      - N8N_HOST=${SUBDOMAIN}.${DOMAIN_NAME}
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=https
+      - NODE_ENV=production
+      - WEBHOOK_URL=https://${SUBDOMAIN}.${DOMAIN_NAME}/
+      - GENERIC_TIMEZONE=${GENERIC_TIMEZONE}
+      - DB_TYPE=postgresdb
+      - DB_POSTGRESDB_HOST=postgres
+      - DB_POSTGRESDB_PORT=5432
+      - DB_POSTGRESDB_DATABASE=${POSTGRES_DB}
+      - DB_POSTGRESDB_USER=${POSTGRES_NON_ROOT_USER}
+      - DB_POSTGRESDB_PASSWORD=${POSTGRES_NON_ROOT_PASSWORD}
+    links:
+      - postgres
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./local-files:/files
+
+volumes:
+  n8n_data:
+  traefik_data:
+  db_storage:
+  n8n_storage:
+#######################
+EOF
+  if [ -f docker-compose.yml ] && [ -w docker-compose.yml ]; then
+    echo "Файл docker-compose.yml успешно обновлён с поддержкой Postgres." | tee -a $LOGFILE
+    echo
+    echo "=========================================" | tee -a $LOGFILE
+    echo "Postgres успешно добавлен!" | tee -a $LOGFILE
+    echo "Справка: Postgres работает на порту 5432 внутри контейнера." | tee -a $LOGFILE
+    echo "Если вы пробрасываете порт наружу, используйте порт 5432 для подключения к базе данных." | tee -a $LOGFILE
+    echo "=========================================" | tee -a $LOGFILE
+  else
+    echo "Ошибка: файл docker-compose.yml не был создан или недоступен для записи!" | tee -a $LOGFILE
+    exit 1
+  fi
 fi
 
 # Пункт 2: установка Redis

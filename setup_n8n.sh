@@ -123,25 +123,26 @@ sudo chown -R "$INSTALL_USER:$INSTALL_USER" .
 echo "Перешёл в папку: $USER_HOME" | tee -a $LOGFILE
 
 # Запрашиваем у пользователя необходимые значения для .env
-read -p "Введите адрес сайта (например, workfor.ru): " FULL_DOMAIN
-IFS='.' read -ra PARTS <<< "$FULL_DOMAIN"
-if [ "${#PARTS[@]}" -lt 2 ]; then
-  echo "Ошибка: домен должен содержать хотя бы одну точку!" | tee -a $LOGFILE
-  exit 1
-fi
-SUBDOMAIN="${PARTS[0]}"
-DOMAIN_NAME="${PARTS[@]:1}"
-DOMAIN_NAME="${DOMAIN_NAME// /.}"  # склеиваем обратно через точку
-read -p "Введите email для SSL: " SSL_EMAIL
-read -p "Введите таймзону (например, Europe/Moscow): " GENERIC_TIMEZONE
+if [ "$INSTALL_N8N" = "1" ]; then
+  read -p "Введите адрес сайта (например, workfor.ru): " FULL_DOMAIN
+  IFS='.' read -ra PARTS <<< "$FULL_DOMAIN"
+  if [ "${#PARTS[@]}" -lt 2 ]; then
+    echo "Ошибка: домен должен содержать хотя бы одну точку!" | tee -a $LOGFILE
+    exit 1
+  fi
+  SUBDOMAIN="${PARTS[0]}"
+  DOMAIN_NAME="${PARTS[@]:1}"
+  DOMAIN_NAME="${DOMAIN_NAME// /.}"  # склеиваем обратно через точку
+  read -p "Введите email для SSL: " SSL_EMAIL
+  read -p "Введите таймзону (например, Europe/Moscow): " GENERIC_TIMEZONE
 
-DOMAIN_NAME=${DOMAIN_NAME:-example.com}
-SUBDOMAIN=${SUBDOMAIN:-n8n}
-SSL_EMAIL=${SSL_EMAIL:-admin@example.com}
-GENERIC_TIMEZONE=${GENERIC_TIMEZONE:-Europe/Moscow}
+  DOMAIN_NAME=${DOMAIN_NAME:-example.com}
+  SUBDOMAIN=${SUBDOMAIN:-n8n}
+  SSL_EMAIL=${SSL_EMAIL:-admin@example.com}
+  GENERIC_TIMEZONE=${GENERIC_TIMEZONE:-Europe/Moscow}
 
-# Создаём .env с введёнными или дефолтными переменными
-cat > .env <<EOF
+  # Создаём .env с введёнными или дефолтными переменными
+  cat > .env <<EOF
 ######################################
 DOMAIN_NAME=$DOMAIN_NAME
 SUBDOMAIN=$SUBDOMAIN
@@ -150,16 +151,16 @@ SSL_EMAIL=$SSL_EMAIL
 ######################################
 EOF
 
-# Проверка успешного создания .env
-if [ ! -f .env ] || [ ! -w .env ]; then
-  echo "Ошибка: файл .env не был создан или недоступен для записи!" | tee -a $LOGFILE
-  exit 1
-fi
+  # Проверка успешного создания .env
+  if [ ! -f .env ] || [ ! -w .env ]; then
+    echo "Ошибка: файл .env не был создан или недоступен для записи!" | tee -a $LOGFILE
+    exit 1
+  fi
 
-# Создаём файлы без подтверждения
-sudo -u "$INSTALL_USER" touch docker-compose.yml
-sudo chown "$INSTALL_USER:$INSTALL_USER" docker-compose.yml
-cat > docker-compose.yml <<'EOF'
+  # Создаём файлы без подтверждения
+  sudo -u "$INSTALL_USER" touch docker-compose.yml
+  sudo chown "$INSTALL_USER:$INSTALL_USER" docker-compose.yml
+  cat > docker-compose.yml <<'EOF'
   #######################
   services:
     traefik:
@@ -221,16 +222,17 @@ cat > docker-compose.yml <<'EOF'
 #######################
 EOF
 
-# Всегда перезапускаем контейнеры после формирования docker-compose.yml
-sudo docker compose down || { echo "Ошибка при остановке контейнеров" | tee -a $LOGFILE; exit 1; }
-sudo docker compose up -d || { echo "Ошибка при запуске контейнеров" | tee -a $LOGFILE; exit 1; }
+  # Всегда перезапускаем контейнеры после формирования docker-compose.yml
+  sudo docker compose down || { echo "Ошибка при остановке контейнеров" | tee -a $LOGFILE; exit 1; }
+  sudo docker compose up -d || { echo "Ошибка при запуске контейнеров" | tee -a $LOGFILE; exit 1; }
 
-echo
-echo "=========================================" | tee -a $LOGFILE
-echo "Установка завершена! Все должно работать." | tee -a $LOGFILE
-echo "Текущие запущенные контейнеры:" | tee -a $LOGFILE
-sudo docker ps | tee -a $LOGFILE
-echo "=========================================" | tee -a $LOGFILE
+  echo
+  echo "=========================================" | tee -a $LOGFILE
+  echo "Установка завершена! Все должно работать." | tee -a $LOGFILE
+  echo "Текущие запущенные контейнеры:" | tee -a $LOGFILE
+  sudo docker ps | tee -a $LOGFILE
+  echo "=========================================" | tee -a $LOGFILE
+fi
 
 # Добавляем блок Postgres только если выбран пункт 3 или 0
 if [ "$INSTALL_POSTGRES" = "1" ]; then

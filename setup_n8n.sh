@@ -142,6 +142,7 @@ if [ "$INSTALL_N8N" = "1" ]; then
   GENERIC_TIMEZONE=${GENERIC_TIMEZONE:-Europe/Moscow}
 
   # Создаём .env с введёнными или дефолтными переменными
+  echo "Создаю файл .env..." | tee -a $LOGFILE
   cat > .env <<EOF
 ######################################
 DOMAIN_NAME=$DOMAIN_NAME
@@ -150,14 +151,15 @@ GENERIC_TIMEZONE=$GENERIC_TIMEZONE
 SSL_EMAIL=$SSL_EMAIL
 ######################################
 EOF
-
-  # Проверка успешного создания .env
-  if [ ! -f .env ] || [ ! -w .env ]; then
+  if [ -f .env ] && [ -w .env ]; then
+    echo "Файл .env успешно создан и заполнен." | tee -a $LOGFILE
+  else
     echo "Ошибка: файл .env не был создан или недоступен для записи!" | tee -a $LOGFILE
     exit 1
   fi
 
   # Создаём файлы без подтверждения
+  echo "Создаю файл docker-compose.yml..." | tee -a $LOGFILE
   sudo -u "$INSTALL_USER" touch docker-compose.yml
   sudo chown "$INSTALL_USER:$INSTALL_USER" docker-compose.yml
   cat > docker-compose.yml <<'EOF'
@@ -221,6 +223,12 @@ EOF
     traefik_data:
 #######################
 EOF
+  if [ -f docker-compose.yml ] && [ -w docker-compose.yml ]; then
+    echo "Файл docker-compose.yml успешно создан и заполнен." | tee -a $LOGFILE
+  else
+    echo "Ошибка: файл docker-compose.yml не был создан или недоступен для записи!" | tee -a $LOGFILE
+    exit 1
+  fi
 
   # Всегда перезапускаем контейнеры после формирования docker-compose.yml
   sudo docker compose down || { echo "Ошибка при остановке контейнеров" | tee -a $LOGFILE; exit 1; }

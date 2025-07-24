@@ -187,6 +187,11 @@ if [ "$INSTALL_N8N" = "1" ]; then
   SUBDOMAIN=$SUBDOMAIN
   GENERIC_TIMEZONE=Europe/Moscow
   SSL_EMAIL=$SSL_EMAIL
+EOF
+
+  # Добавляем блок Postgres только если выбран пункт 3 или 0
+  if [ "$INSTALL_POSTGRES" = "1" ]; then
+    cat >> .env <<EOF
   DB_TYPE=postgresdb
   DB_POSTGRESDB_DATABASE=n8n
   DB_POSTGRESDB_HOST=postgres
@@ -194,8 +199,12 @@ if [ "$INSTALL_N8N" = "1" ]; then
   DB_POSTGRESDB_USER=n8n
   DB_POSTGRESDB_PASSWORD=n8n
   DB_POSTGRESDB_SCHEMA=public
+EOF
+  fi
+
+  cat >> .env <<EOF
   ######################################
-  EOF
+EOF
 
   sudo chown "$INSTALL_USER:$INSTALL_USER" .env
   ENV_PATH="$(pwd)/.env"

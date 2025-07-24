@@ -114,90 +114,16 @@ if [ "$INSTALL_N8N" = "1" ] || [ "$INSTALL_REDIS" = "1" ] || [ "$INSTALL_POSTGRE
   fi
 fi
 
-# Создание папки n8n-compose и переход в неё
-if [ -d n8n-compose ]; then
-  read -p "Папка n8n-compose уже существует. Перезаписать содержимое? (y/n): " OVERWRITE
-  [[ "$OVERWRITE" =~ ^[yY]$ ]] || exit 1
-  rm -rf n8n-compose
-fi
+# Автоматически пересоздаём папку n8n-compose
+rm -rf n8n-compose
 mkdir -p n8n-compose || { echo "Ошибка при создании папки n8n-compose" | tee -a $LOGFILE; exit 1; }
 cd n8n-compose || { echo "Не удалось перейти в папку n8n-compose" | tee -a $LOGFILE; exit 1; }
-echo "Создана и выбрана папка: $(pwd)" | tee -a $LOGFILE
 
-# Проверка существования .env
-if [ -f .env ]; then
-  read -p ".env уже существует. Перезаписать? (y/n): " OVERWRITE
-  [[ "$OVERWRITE" =~ ^[yY]$ ]] || exit 1
-fi
-
-# Ввод домена с повтором при ошибке
-while true; do
-  read -p "Введите домен, который будет использоваться для n8n (например, n8n.example.com): " DOMAIN
-  if [[ "$DOMAIN" =~ ^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]]; then
-    break
-  else
-    echo "Некорректный домен, попробуйте снова." | tee -a $LOGFILE
-  fi
-done
-
-echo "Ваш домен: $DOMAIN" | tee -a $LOGFILE
-
-# Ввод email с повтором при ошибке
-while true; do
-  read -p "Введите email для SSL-сертификата: " SSL_EMAIL
-  if [[ "$SSL_EMAIL" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$ ]]; then
-    break
-  else
-    echo "Некорректный email, попробуйте снова." | tee -a $LOGFILE
-  fi
-done
-
-# Разделение домена на SUBDOMAIN и DOMAIN_NAME
-IFS='.' read -ra DOMAIN_PARTS <<< "$DOMAIN"
-PARTS_COUNT=${#DOMAIN_PARTS[@]}
-if [ $PARTS_COUNT -lt 2 ]; then
-  echo "Домен должен содержать хотя бы одну точку!" | tee -a $LOGFILE
-  exit 1
-fi
-DOMAIN_NAME="${DOMAIN_PARTS[$((PARTS_COUNT-1))]}"
-SUBDOMAIN="${DOMAIN_PARTS[0]}"
-if [ $PARTS_COUNT -gt 2 ]; then
-  for ((i=1; i<PARTS_COUNT-1; i++)); do
-    SUBDOMAIN+=".${DOMAIN_PARTS[$i]}"
-  done
-fi
-
-cat > .env <<EOF
-  ######################################
-  DOMAIN_NAME=$DOMAIN_NAME
-  SUBDOMAIN=$SUBDOMAIN
-  GENERIC_TIMEZONE=Europe/Moscow
-  SSL_EMAIL=$SSL_EMAIL
-  ######################################
-EOF
-
-sudo chown "$INSTALL_USER:$INSTALL_USER" .env
-ENV_PATH="$(pwd)/.env"
-
-mkdir -p local-files
-sudo chown "$INSTALL_USER:$INSTALL_USER" local-files
-
-echo "=========================================" | tee -a $LOGFILE
-echo "Файл .env создан по пути: $ENV_PATH" | tee -a $LOGFILE
-echo "Для редактирования используйте команду:" | tee -a $LOGFILE
-echo "sudo -u $INSTALL_USER nano $ENV_PATH" | tee -a $LOGFILE
-echo "=========================================" | tee -a $LOGFILE
-
-# Проверка существования docker-compose.yml
-if [ -f docker-compose.yml ]; then
-  read -p "docker-compose.yml уже существует. Перезаписать? (y/n): " OVERWRITE
-  [[ "$OVERWRITE" =~ ^[yY]$ ]] || exit 1
-fi
-
-# Проверка и исправление прав на домашнюю папку и n8n-compose
+# Исправляем права на домашнюю папку и n8n-compose
 sudo chown -R "$INSTALL_USER:$INSTALL_USER" "$USER_HOME"
 sudo chown -R "$INSTALL_USER:$INSTALL_USER" n8n-compose
 
+# Создаём файлы без подтверждения
 sudo -u "$INSTALL_USER" touch docker-compose.yml
 sudo chown "$INSTALL_USER:$INSTALL_USER" docker-compose.yml
 cat > docker-compose.yml <<'EOF'

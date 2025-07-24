@@ -338,8 +338,8 @@ final_summary() {
 while true; do
     echo
     echo "Выберите действие:"
-    echo "0. Выполнить все шаги по порядку (с подтверждением)"
-    echo "1. Выполнить все шаги по порядку (без подтверждения)"
+    echo "0. Выполнить все шаги по порядку (без подтверждения)"
+    echo "1. Выполнить все шаги по порядку (с подтверждением)"
     echo "2. Обновление системы и установка базовых пакетов"
     echo "3. Настройка SSH"
     echo "4. Создание нового пользователя"
@@ -355,7 +355,7 @@ while true; do
 
     case $MENU_CHOICE in
         0)
-            read -p "Вы уверены, что хотите выполнить все шаги по порядку? (y/n): " CONFIRM
+            read -p "Вы уверены, что хотите выполнить все шаги по порядку?(без подтверждения) (y/n): " CONFIRM
             if [[ "$CONFIRM" =~ ^([yY][eE][sS]?|[yY])$ ]]; then
                 update_system_and_install_packages
                 setup_ssh
@@ -373,17 +373,22 @@ while true; do
             fi
             ;;
         1)
-            update_system_and_install_packages
-            setup_ssh
-            create_new_user
-            disable_root_login
-            disable_password_auth
-            install_docker
-            create_swap
-            install_unattended_upgrades
-            install_ufw
-            clean_system
-            final_summary
+            read -p "Вы уверены, что хотите выполнить все шаги по порядку?(с подтверждением) (y/n): " CONFIRM
+            if [[ "$CONFIRM" =~ ^([yY][eE][sS]?|[yY])$ ]]; then
+                update_system_and_install_packages
+                setup_ssh
+                create_new_user
+                disable_root_login
+                disable_password_auth
+                install_docker
+                create_swap
+                install_unattended_upgrades
+                install_ufw
+                clean_system
+                final_summary
+            else
+                echo "Отмена выполнения всех шагов."
+            fi
             ;;
         2)
             update_system_and_install_packages

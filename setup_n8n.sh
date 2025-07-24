@@ -1,8 +1,38 @@
 #!/bin/bash
 
 # =============================================
-# Меню выбора этапов установки
+# Скрипт установки n8n с поддержкой Redis/Postgres и Traefik
+# Требования: запуск от root, установленные docker и docker compose
 # =============================================
+
+set -e
+LOGFILE="setup_n8n.log"
+
+# Проверка прав
+if [ "$EUID" -ne 0 ]; then
+  echo "Пожалуйста, запустите скрипт с root-правами (sudo)!" | tee -a $LOGFILE
+  exit 1
+fi
+
+# Проверка наличия docker
+if ! command -v docker &> /dev/null; then
+  echo "Docker не установлен! Установите Docker и повторите запуск." | tee -a $LOGFILE
+  exit 1
+fi
+if ! docker compose version &> /dev/null; then
+  echo "Docker Compose не установлен или не интегрирован с docker! Установите docker compose plugin." | tee -a $LOGFILE
+  exit 1
+fi
+
+# Проверка портов
+for PORT in 80 443 5678; do
+  if lsof -i :$PORT -sTCP:LISTEN -t >/dev/null ; then
+    echo "Порт $PORT уже занят! Освободите порт и повторите запуск." | tee -a $LOGFILE
+    exit 1
+  fi
+done
+
+# Меню выбора этапов установки
 while true; do
   echo
   echo "Выберите действие:"
@@ -33,81 +63,97 @@ while true; do
       INSTALL_POSTGRES=1
       ;;
     q|Q)
-      echo "Выход."
+      echo "Выход." | tee -a $LOGFILE
       exit 0
       ;;
     *)
-      echo "Некорректный выбор. Попробуйте снова."
+      echo "Некорректный выбор. Попробуйте снова." | tee -a $LOGFILE
       continue
       ;;
   esac
   break
 done
 
-# =============================================
-# Опрос: в папку какого пользователя устанавливать n8n
-# =============================================
-
 # Получаем список пользователей с shell bash/sh
 USER_LIST=($(awk -F: '($7=="/bin/bash"||$7=="/bin/sh"){print $1}' /etc/passwd))
 
 if [ ${#USER_LIST[@]} -eq 0 ]; then
-  echo "В системе не найдено пользователей с shell /bin/bash или /bin/sh."
+  echo "В системе не найдено пользователей с shell /bin/bash или /bin/sh." | tee -a $LOGFILE
   exit 1
 fi
 
-echo "Выберите пользователя, в папку которого будет установлена n8n:"
-for i in "${!USER_LIST[@]}"; do
-  idx=$((i+1))
-  echo "$idx. ${USER_LIST[$i]}"
+while true; do
+  echo "Выберите пользователя, в папку которого будет установлена n8n:"
+  for i in "${!USER_LIST[@]}"; do
+    idx=$((i+1))
+    echo "$idx. ${USER_LIST[$i]}"
+  done
+  read -p "Введите номер пользователя: " USER_NUM
+  if ! [[ "$USER_NUM" =~ ^[0-9]+$ ]] || [ "$USER_NUM" -lt 1 ] || [ "$USER_NUM" -gt ${#USER_LIST[@]} ]; then
+    echo "Некорректный выбор! Попробуйте снова." | tee -a $LOGFILE
+  else
+    break
+  fi
 done
 
-read -p "Введите номер пользователя: " USER_NUM
-
-if ! [[ "$USER_NUM" =~ ^[0-9]+$ ]] || [ "$USER_NUM" -lt 1 ] || [ "$USER_NUM" -gt ${#USER_LIST[@]} ]; then
-  echo "Некорректный выбор!"
-  exit 1
-fi
-
 INSTALL_USER="${USER_LIST[$((USER_NUM-1))]}"
-echo "Выбран пользователь: $INSTALL_USER"
+echo "Выбран пользователь: $INSTALL_USER" | tee -a $LOGFILE
 
-# Переход в домашнюю папку выбранного пользователя
 USER_HOME=$(eval echo "~$INSTALL_USER")
 if [ ! -d "$USER_HOME" ]; then
-  echo "Домашняя папка пользователя $INSTALL_USER не найдена!"
+  echo "Домашняя папка пользователя $INSTALL_USER не найдена! Проверьте корректность пользователя." | tee -a $LOGFILE
   exit 1
 fi
-cd "$USER_HOME"
-echo "Перешёл в папку: $USER_HOME"
+cd "$USER_HOME" || { echo "Не удалось перейти в домашнюю папку!" | tee -a $LOGFILE; exit 1; }
+echo "Перешёл в папку: $USER_HOME" | tee -a $LOGFILE
 
 # Создание папки n8n-compose и переход в неё
-mkdir -p n8n-compose
-cd n8n-compose
-echo "Создана и выбрана папка: $(pwd)"
+if [ -d n8n-compose ]; then
+  read -p "Папка n8n-compose уже существует. Перезаписать содержимое? (y/n): " OVERWRITE
+  [[ "$OVERWRITE" =~ ^[yY]$ ]] || exit 1
+  rm -rf n8n-compose
+fi
+mkdir -p n8n-compose || { echo "Ошибка при создании папки n8n-compose" | tee -a $LOGFILE; exit 1; }
+cd n8n-compose || { echo "Не удалось перейти в папку n8n-compose" | tee -a $LOGFILE; exit 1; }
+echo "Создана и выбрана папка: $(pwd)" | tee -a $LOGFILE
 
-# Устанавливаем владельца папки n8n-compose на выбранного пользователя
 cd "$USER_HOME"
 sudo chown -R "$INSTALL_USER:$INSTALL_USER" n8n-compose
 cd n8n-compose
 
-# Создание файла .env с правами выбранного пользователя и открытие его в nano
-sudo -u "$INSTALL_USER" touch .env
-sudo chown "$INSTALL_USER:$INSTALL_USER" .env
+# Проверка существования .env
+if [ -f .env ]; then
+  read -p ".env уже существует. Перезаписать? (y/n): " OVERWRITE
+  [[ "$OVERWRITE" =~ ^[yY]$ ]] || exit 1
+fi
 
-# Запрос домена у пользователя
-read -p "Введите домен, который будет использоваться для n8n (например, n8n.example.com): " DOMAIN
+# Ввод домена с повтором при ошибке
+while true; do
+  read -p "Введите домен, который будет использоваться для n8n (например, n8n.example.com): " DOMAIN
+  if [[ "$DOMAIN" =~ ^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]]; then
+    break
+  else
+    echo "Некорректный домен, попробуйте снова." | tee -a $LOGFILE
+  fi
+done
 
-echo "Ваш домен: $DOMAIN"
+echo "Ваш домен: $DOMAIN" | tee -a $LOGFILE
 
-# Запрос email для SSL
-read -p "Введите email для SSL-сертификата: " SSL_EMAIL
+# Ввод email с повтором при ошибке
+while true; do
+  read -p "Введите email для SSL-сертификата: " SSL_EMAIL
+  if [[ "$SSL_EMAIL" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$ ]]; then
+    break
+  else
+    echo "Некорректный email, попробуйте снова." | tee -a $LOGFILE
+  fi
+done
 
 # Разделение домена на SUBDOMAIN и DOMAIN_NAME
 IFS='.' read -ra DOMAIN_PARTS <<< "$DOMAIN"
 PARTS_COUNT=${#DOMAIN_PARTS[@]}
 if [ $PARTS_COUNT -lt 2 ]; then
-  echo "Домен должен содержать хотя бы одну точку!"
+  echo "Домен должен содержать хотя бы одну точку!" | tee -a $LOGFILE
   exit 1
 fi
 DOMAIN_NAME="${DOMAIN_PARTS[$((PARTS_COUNT-1))]}"
@@ -118,26 +164,12 @@ if [ $PARTS_COUNT -gt 2 ]; then
   done
 fi
 
-# Формируем блок для .env
 cat > .env <<EOF
 ######################################
-# DOMAIN_NAME and SUBDOMAIN together determine where n8n will be reachable from
-# The top level domain to serve from
 DOMAIN_NAME=$DOMAIN_NAME
-
-# The subdomain to serve from
 SUBDOMAIN=$SUBDOMAIN
-
-# The above example serve n8n at: https://$DOMAIN
-
-# Optional timezone to set which gets used by Cron and other scheduling nodes
-# New York is the default value if not set
 GENERIC_TIMEZONE=Europe/Moscow
-
-# The email address to use for the TLS/SSL certificate creation
 SSL_EMAIL=$SSL_EMAIL
-
-# === n8n Postgres connection ===
 DB_TYPE=postgresdb
 DB_POSTGRESDB_DATABASE=n8n
 DB_POSTGRESDB_HOST=postgres
@@ -149,24 +181,23 @@ DB_POSTGRESDB_SCHEMA=public
 EOF
 
 sudo chown "$INSTALL_USER:$INSTALL_USER" .env
-
-# (Удалено) Открытие .env в nano от имени выбранного пользователя
-
-# Справка для пользователя
 ENV_PATH="$(pwd)/.env"
 
-echo
-# Создание папки local-files с правами выбранного пользователя
 mkdir -p local-files
 sudo chown "$INSTALL_USER:$INSTALL_USER" local-files
 
-echo "========================================="
-echo "Файл .env создан по пути: $ENV_PATH"
-echo "Для редактирования используйте команду:"
-echo "sudo -u $INSTALL_USER nano $ENV_PATH"
-echo "========================================="
+echo "=========================================" | tee -a $LOGFILE
+echo "Файл .env создан по пути: $ENV_PATH" | tee -a $LOGFILE
+echo "Для редактирования используйте команду:" | tee -a $LOGFILE
+echo "sudo -u $INSTALL_USER nano $ENV_PATH" | tee -a $LOGFILE
+echo "=========================================" | tee -a $LOGFILE
 
-# Создание docker-compose.yml с правами выбранного пользователя и открытие его в nano
+# Проверка существования docker-compose.yml
+if [ -f docker-compose.yml ]; then
+  read -p "docker-compose.yml уже существует. Перезаписать? (y/n): " OVERWRITE
+  [[ "$OVERWRITE" =~ ^[yY]$ ]] || exit 1
+fi
+
 sudo -u "$INSTALL_USER" touch docker-compose.yml
 sudo chown "$INSTALL_USER:$INSTALL_USER" docker-compose.yml
 cat > docker-compose.yml <<EOF
@@ -231,14 +262,14 @@ volumes:
 #######################
 EOF
 
-# (Удаляю первый запуск sudo docker compose up -d)
-
 # Опрос о необходимости Redis и Postgres
 
 REDIS_BLOCK="  redis:\n    image: redis:7-alpine\n    restart: always\n    ports:\n      - \"6379:6379\"\n    volumes:\n      - redis_data:/data\n"
 POSTGRES_BLOCK="  postgres:\n    image: postgres:15-alpine\n    restart: always\n    environment:\n      - POSTGRES_USER=n8n\n      - POSTGRES_PASSWORD=n8n\n      - POSTGRES_DB=n8n\n    ports:\n      - \"5432:5432\"\n    volumes:\n      - postgres_data:/var/lib/postgresql/data\n"
 
 NEED_RESTART=0
+TMPFILE=""
+trap '[ -n "$TMPFILE" ] && rm -f "$TMPFILE"' EXIT
 
 if [[ "$INSTALL_REDIS" =~ ^([yY][eE][sS]?|[yY])$ ]] || [[ "$INSTALL_POSTGRES" =~ ^([yY][eE][sS]?|[yY])$ ]]; then
   TMPFILE=$(mktemp)
@@ -246,7 +277,6 @@ if [[ "$INSTALL_REDIS" =~ ^([yY][eE][sS]?|[yY])$ ]] || [[ "$INSTALL_POSTGRES" =~
   while IFS= read -r line; do
     echo "$line" >> "$TMPFILE"
     if [[ $line =~ ^services: ]]; then
-      # После строки services: вставляем блоки
       if [[ "$INSTALL_REDIS" =~ ^([yY][eE][sS]?|[yY])$ ]]; then
         echo -e "$REDIS_BLOCK" >> "$TMPFILE"
         NEED_RESTART=1
@@ -257,7 +287,6 @@ if [[ "$INSTALL_REDIS" =~ ^([yY][eE][sS]?|[yY])$ ]] || [[ "$INSTALL_POSTGRES" =~
       fi
       INSERTED=1
     fi
-    # После первого вставления не вставлять снова
   done < docker-compose.yml
   mv "$TMPFILE" docker-compose.yml
 fi
@@ -274,14 +303,12 @@ if [[ "$INSTALL_POSTGRES" =~ ^([yY][eE][sS]?|[yY])$ ]]; then
 fi
 
 # Всегда перезапускаем контейнеры после формирования docker-compose.yml
-sudo docker compose down
-sudo docker compose up -d
+sudo docker compose down || { echo "Ошибка при остановке контейнеров" | tee -a $LOGFILE; exit 1; }
+sudo docker compose up -d || { echo "Ошибка при запуске контейнеров" | tee -a $LOGFILE; exit 1; }
 
 echo
-echo "========================================="
-echo "Установка завершена! Все должно работать."
-echo "Текущие запущенные контейнеры:" 
-sudo docker ps
-echo "========================================="
-
-# Здесь будет дальнейшая логика установки n8n для $INSTALL_USER
+echo "=========================================" | tee -a $LOGFILE
+echo "Установка завершена! Все должно работать." | tee -a $LOGFILE
+echo "Текущие запущенные контейнеры:" | tee -a $LOGFILE
+sudo docker ps | tee -a $LOGFILE
+echo "=========================================" | tee -a $LOGFILE

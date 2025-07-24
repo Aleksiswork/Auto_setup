@@ -194,6 +194,10 @@ if [ -f docker-compose.yml ]; then
   [[ "$OVERWRITE" =~ ^[yY]$ ]] || exit 1
 fi
 
+# Проверка и исправление прав на домашнюю папку и n8n-compose
+sudo chown -R "$INSTALL_USER:$INSTALL_USER" "$USER_HOME"
+sudo chown -R "$INSTALL_USER:$INSTALL_USER" n8n-compose
+
 sudo -u "$INSTALL_USER" touch docker-compose.yml
 sudo chown "$INSTALL_USER:$INSTALL_USER" docker-compose.yml
 cat > docker-compose.yml <<'EOF'

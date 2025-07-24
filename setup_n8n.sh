@@ -246,13 +246,11 @@ fi
 
 # Добавляем блок Postgres только если выбран пункт 3 или 0
 if [ "$INSTALL_POSTGRES" = "1" ]; then
-  # Везде далее используем относительные пути n8n-compose/.env и n8n-compose для выбранного пользователя
-  # Поиск n8n-compose/.env для доустановки сервисов — только в $USER_HOME
-  if [ ! -d "n8n-compose" ] || [ ! -f "n8n-compose/.env" ]; then
-    echo "Каталог n8n-compose или файл .env не найдены в домашней папке пользователя $INSTALL_USER! Сначала выполните установку N8N (пункт 1)." | tee -a $LOGFILE
+  if [ ! -f ".env" ] || [ ! -f "docker-compose.yml" ]; then
+    echo "Файл .env или docker-compose.yml не найден. Сначала выполните установку N8N (пункт 1)." | tee -a $LOGFILE
     exit 1
   fi
-  cat >> n8n-compose/.env <<EOF
+  cat >> .env <<EOF
 DB_TYPE=postgresdb
 DB_POSTGRESDB_DATABASE=n8n
 DB_POSTGRESDB_HOST=postgres
@@ -266,7 +264,7 @@ fi
 
 # Пункт 2: установка Redis
 if [ "$INSTALL_REDIS" = "1" ] && [ "$INSTALL_N8N" = "0" ]; then
-  if [ ! -f docker-compose.yml ]; then
+  if [ ! -f "docker-compose.yml" ]; then
     echo "Файл docker-compose.yml не найден. Сначала выполните установку N8N (пункт 1), чтобы создать базовую структуру." | tee -a $LOGFILE
     exit 1
   fi

@@ -24,14 +24,6 @@ if ! docker compose version &> /dev/null; then
   exit 1
 fi
 
-# Проверка портов
-for PORT in 80 443 5678; do
-  if lsof -i :$PORT -sTCP:LISTEN -t >/dev/null ; then
-    echo "Порт $PORT уже занят! Освободите порт и повторите запуск." | tee -a $LOGFILE
-    exit 1
-  fi
-done
-
 # Меню выбора этапов установки
 while true; do
   echo
@@ -94,6 +86,14 @@ fi
 USER_LIST=($(awk -F: '($7=="/bin/bash"||$7=="/bin/sh"){print $1}' /etc/passwd))
 
 if [ "$INSTALL_N8N" = "1" ]; then
+  # Проверка портов 80, 443, 5678 только при установке N8N
+  for PORT in 80 443 5678; do
+    if lsof -i :$PORT -sTCP:LISTEN -t >/dev/null ; then
+      echo "Порт $PORT уже занят! Освободите порт и повторите запуск." | tee -a $LOGFILE
+      exit 1
+    fi
+  done
+
   if [ ${#USER_LIST[@]} -eq 0 ]; then
     echo "В системе не найдено пользователей с shell /bin/bash или /bin/sh." | tee -a $LOGFILE
     exit 1

@@ -117,11 +117,10 @@ fi
 # Автоматически пересоздаём папку n8n-compose
 rm -rf n8n-compose
 mkdir -p n8n-compose || { echo "Ошибка при создании папки n8n-compose" | tee -a $LOGFILE; exit 1; }
-cd n8n-compose || { echo "Не удалось перейти в папку n8n-compose" | tee -a $LOGFILE; exit 1; }
-
-# Исправляем права на домашнюю папку и n8n-compose
-sudo chown -R "$INSTALL_USER:$INSTALL_USER" "$USER_HOME"
 sudo chown -R "$INSTALL_USER:$INSTALL_USER" n8n-compose
+cd n8n-compose || { echo "Не удалось перейти в папку n8n-compose" | tee -a $LOGFILE; exit 1; }
+sudo chown -R "$INSTALL_USER:$INSTALL_USER" .
+echo "Перешёл в папку: $USER_HOME" | tee -a $LOGFILE
 
 # Создаём файлы без подтверждения
 sudo -u "$INSTALL_USER" touch docker-compose.yml

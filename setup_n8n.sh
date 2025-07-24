@@ -123,7 +123,7 @@ sudo chown -R "$INSTALL_USER:$INSTALL_USER" .
 echo "Перешёл в папку: $USER_HOME" | tee -a $LOGFILE
 
 # Запрашиваем у пользователя необходимые значения для .env
-read -p "Введите домен с поддоменом (например, www.workfor.ru): " FULL_DOMAIN
+read -p "Введите адрес сайта (например, workfor.ru): " FULL_DOMAIN
 IFS='.' read -ra PARTS <<< "$FULL_DOMAIN"
 if [ "${#PARTS[@]}" -lt 2 ]; then
   echo "Ошибка: домен должен содержать хотя бы одну точку!" | tee -a $LOGFILE

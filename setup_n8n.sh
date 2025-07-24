@@ -24,6 +24,38 @@ if ! docker compose version &> /dev/null; then
   exit 1
 fi
 
+# Получаем список пользователей с shell bash/sh
+USER_LIST=($(awk -F: '($7=="/bin/bash"||$7=="/bin/sh"){print $1}' /etc/passwd))
+
+if [ ${#USER_LIST[@]} -eq 0 ]; then
+  echo "В системе не найдено пользователей с shell /bin/bash или /bin/sh." | tee -a $LOGFILE
+  exit 1
+fi
+
+while true; do
+  echo "Выберите пользователя, для которого будет производиться установка:" 
+  for i in "${!USER_LIST[@]}"; do
+    idx=$((i+1))
+    echo "$idx. ${USER_LIST[$i]}"
+  done
+  read -p "Введите номер пользователя: " USER_NUM
+  if ! [[ "$USER_NUM" =~ ^[0-9]+$ ]] || [ "$USER_NUM" -lt 1 ] || [ "$USER_NUM" -gt ${#USER_LIST[@]} ]; then
+    echo "Некорректный выбор! Попробуйте снова." | tee -a $LOGFILE
+  else
+    break
+  fi
+done
+
+INSTALL_USER="${USER_LIST[$((USER_NUM-1))]}"
+echo "Выбран пользователь: $INSTALL_USER" | tee -a $LOGFILE
+USER_HOME=$(eval echo "~$INSTALL_USER")
+if [ ! -d "$USER_HOME" ]; then
+  echo "Домашняя папка пользователя $INSTALL_USER не найдена! Проверьте корректность пользователя." | tee -a $LOGFILE
+  exit 1
+fi
+cd "$USER_HOME" || { echo "Не удалось перейти в домашнюю папку!" | tee -a $LOGFILE; exit 1; }
+echo "Перешёл в папку: $USER_HOME" | tee -a $LOGFILE
+
 # Меню выбора этапов установки
 while true; do
   echo
@@ -81,38 +113,6 @@ if [ "$INSTALL_N8N" = "1" ] || [ "$INSTALL_REDIS" = "1" ] || [ "$INSTALL_POSTGRE
     exit 1
   fi
 fi
-
-# Получаем список пользователей с shell bash/sh
-USER_LIST=($(awk -F: '($7=="/bin/bash"||$7=="/bin/sh"){print $1}' /etc/passwd))
-
-if [ ${#USER_LIST[@]} -eq 0 ]; then
-  echo "В системе не найдено пользователей с shell /bin/bash или /bin/sh." | tee -a $LOGFILE
-  exit 1
-fi
-
-while true; do
-  echo "Выберите пользователя, для которого будет производиться установка:" 
-  for i in "${!USER_LIST[@]}"; do
-    idx=$((i+1))
-    echo "$idx. ${USER_LIST[$i]}"
-  done
-  read -p "Введите номер пользователя: " USER_NUM
-  if ! [[ "$USER_NUM" =~ ^[0-9]+$ ]] || [ "$USER_NUM" -lt 1 ] || [ "$USER_NUM" -gt ${#USER_LIST[@]} ]; then
-    echo "Некорректный выбор! Попробуйте снова." | tee -a $LOGFILE
-  else
-    break
-  fi
-done
-
-INSTALL_USER="${USER_LIST[$((USER_NUM-1))]}"
-echo "Выбран пользователь: $INSTALL_USER" | tee -a $LOGFILE
-USER_HOME=$(eval echo "~$INSTALL_USER")
-if [ ! -d "$USER_HOME" ]; then
-  echo "Домашняя папка пользователя $INSTALL_USER не найдена! Проверьте корректность пользователя." | tee -a $LOGFILE
-  exit 1
-fi
-cd "$USER_HOME" || { echo "Не удалось перейти в домашнюю папку!" | tee -a $LOGFILE; exit 1; }
-echo "Перешёл в папку: $USER_HOME" | tee -a $LOGFILE
 
 # Создание папки n8n-compose и переход в неё
 if [ -d n8n-compose ]; then

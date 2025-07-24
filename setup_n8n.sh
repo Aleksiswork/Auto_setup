@@ -123,8 +123,15 @@ sudo chown -R "$INSTALL_USER:$INSTALL_USER" .
 echo "Перешёл в папку: $USER_HOME" | tee -a $LOGFILE
 
 # Запрашиваем у пользователя необходимые значения для .env
-read -p "Введите домен (например, example.com): " DOMAIN_NAME
-read -p "Введите поддомен (например, n8n): " SUBDOMAIN
+read -p "Введите домен с поддоменом (например, www.workfor.ru): " FULL_DOMAIN
+IFS='.' read -ra PARTS <<< "$FULL_DOMAIN"
+if [ "${#PARTS[@]}" -lt 2 ]; then
+  echo "Ошибка: домен должен содержать хотя бы одну точку!" | tee -a $LOGFILE
+  exit 1
+fi
+SUBDOMAIN="${PARTS[0]}"
+DOMAIN_NAME="${PARTS[@]:1}"
+DOMAIN_NAME="${DOMAIN_NAME// /.}"  # склеиваем обратно через точку
 read -p "Введите email для SSL: " SSL_EMAIL
 read -p "Введите таймзону (например, Europe/Moscow): " GENERIC_TIMEZONE
 

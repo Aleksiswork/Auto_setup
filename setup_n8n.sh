@@ -286,7 +286,23 @@ fi
 
 # Добавляем блок Postgres только если выбран пункт 3 или 0
 if [ "$INSTALL_POSTGRES" = "1" ]; then
-  cat >> n8n-compose/.env <<EOF
+  # Ищем все .env в n8n-compose в /home
+  N8N_ENVS=($(find /home -type f -path '*/n8n-compose/.env' 2>/dev/null))
+
+  if [ ${#N8N_ENVS[@]} -eq 0 ]; then
+    echo "Файл n8n-compose/.env не найден ни в одном домашнем каталоге! Сначала выполните установку N8N (пункт 1)." | tee -a $LOGFILE
+    exit 1
+  elif [ ${#N8N_ENVS[@]} -eq 1 ]; then
+    N8N_ENV_PATH="${N8N_ENVS[0]}"
+  else
+    echo "Найдено несколько файлов n8n-compose/.env:"
+    select N8N_ENV_PATH in "${N8N_ENVS[@]}"; do
+      [ -n "$N8N_ENV_PATH" ] && break
+      echo "Некорректный выбор!"
+    done
+  fi
+
+  cat >> "$N8N_ENV_PATH" <<EOF
 DB_TYPE=postgresdb
 DB_POSTGRESDB_DATABASE=n8n
 DB_POSTGRESDB_HOST=postgres

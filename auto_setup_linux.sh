@@ -71,21 +71,47 @@ update_system_and_install_packages() {
 create_new_user() {
     echo
     echo "=== Создание нового пользователя ===" | tee -a $LOGFILE
-    read -p "Введите имя нового пользователя: " NEW_USER
+    while true; do
+        read -p "Введите имя нового пользователя: " NEW_USER
+        NEW_USER=$(echo "$NEW_USER" | tr -d '[:space:]')
+        if [ -z "$NEW_USER" ]; then
+            echo "Ошибка: имя пользователя не может быть пустым. Попробуйте снова." | tee -a $LOGFILE
+            continue
+        fi
+        if [[ ! "$NEW_USER" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+            echo "Ошибка: имя может содержать только буквы, цифры, дефис и подчёркивание. Попробуйте снова." | tee -a $LOGFILE
+            continue
+        fi
+        break
+    done
+
     if id "$NEW_USER" &>/dev/null; then
         echo "Пользователь $NEW_USER уже существует." | tee -a $LOGFILE
     else
-        sudo adduser "$NEW_USER" | tee -a $LOGFILE
-        sudo usermod -aG sudo "$NEW_USER" | tee -a $LOGFILE
+        echo "Создаю пользователя $NEW_USER (будет запрос пароля и доп. данных)..." | tee -a $LOGFILE
+        # adduser — интерактивная команда: НЕ pipe к tee, иначе не спросит пароль
+        if sudo adduser "$NEW_USER"; then
+            echo "adduser завершён успешно." | tee -a $LOGFILE
+        else
+            echo "Ошибка при создании пользователя $NEW_USER! Прерывание." | tee -a $LOGFILE
+            return 1
+        fi
+        sudo usermod -aG sudo "$NEW_USER"
         echo "Пользователь $NEW_USER создан и добавлен в группу sudo." | tee -a $LOGFILE
     fi
-    echo "Копирую SSH-ключи для пользователя $NEW_USER..." | tee -a $LOGFILE
+
     USER_HOME="/home/$NEW_USER"
-    sudo mkdir -p "$USER_HOME/.ssh" | tee -a $LOGFILE
-    sudo cp /root/.ssh/authorized_keys "$USER_HOME/.ssh/authorized_keys" | tee -a $LOGFILE
-    sudo chown -R "$NEW_USER:$NEW_USER" "$USER_HOME/.ssh" | tee -a $LOGFILE
-    sudo chmod 700 "$USER_HOME/.ssh" | tee -a $LOGFILE
-    sudo chmod 600 "$USER_HOME/.ssh/authorized_keys" | tee -a $LOGFILE
+    if [ ! -d "$USER_HOME" ]; then
+        echo "Ошибка: домашняя папка $USER_HOME не найдена. Пропуск копирования SSH-ключей." | tee -a $LOGFILE
+        return 1
+    fi
+
+    echo "Копирую SSH-ключи для пользователя $NEW_USER..." | tee -a $LOGFILE
+    sudo mkdir -p "$USER_HOME/.ssh"
+    sudo cp /root/.ssh/authorized_keys "$USER_HOME/.ssh/authorized_keys"
+    sudo chown -R "$NEW_USER:$NEW_USER" "$USER_HOME/.ssh"
+    sudo chmod 700 "$USER_HOME/.ssh"
+    sudo chmod 600 "$USER_HOME/.ssh/authorized_keys"
     echo "SSH-ключи скопированы для пользователя $NEW_USER." | tee -a $LOGFILE
 }
 

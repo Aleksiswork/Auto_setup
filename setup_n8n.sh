@@ -136,12 +136,10 @@ if [ "$INSTALL_N8N" = "1" ]; then
   DOMAIN_NAME="${PARTS[@]:1}"
   DOMAIN_NAME="${DOMAIN_NAME// /.}"  # склеиваем обратно через точку
   read -p "Введите email для SSL: " SSL_EMAIL
-  read -p "Введите таймзону (например, Europe/Moscow): " GENERIC_TIMEZONE
 
   DOMAIN_NAME=${DOMAIN_NAME:-example.com}
   SUBDOMAIN=${SUBDOMAIN:-n8n}
   SSL_EMAIL=${SSL_EMAIL:-admin@example.com}
-  GENERIC_TIMEZONE=${GENERIC_TIMEZONE:-Europe/Moscow}
 
   # Создаём .env с введёнными или дефолтными переменными
   echo "Создаю файл .env..." | tee -a $LOGFILE
@@ -149,7 +147,6 @@ if [ "$INSTALL_N8N" = "1" ]; then
 ######################################
 DOMAIN_NAME=$DOMAIN_NAME
 SUBDOMAIN=$SUBDOMAIN
-GENERIC_TIMEZONE=$GENERIC_TIMEZONE
 SSL_EMAIL=$SSL_EMAIL
 ######################################
 EOF
@@ -215,7 +212,6 @@ EOF
         - N8N_PROTOCOL=https
         - NODE_ENV=production
         - WEBHOOK_URL=https://$SUBDOMAIN.$DOMAIN_NAME/
-        - GENERIC_TIMEZONE=${GENERIC_TIMEZONE}
       volumes:
         - n8n_data:/home/node/.n8n
         - ./local-files:/files

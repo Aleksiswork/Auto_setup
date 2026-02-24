@@ -1,15 +1,18 @@
 #!/bin/bash
-# Если на Linux ошибка "Syntax error: newline unexpected" — уберите Windows-переводы строк:
-#   sed -i 's/\r$//' setup_n8n.sh
-# или: dos2unix setup_n8n.sh
-
 # =============================================
 # Скрипт установки n8n с поддержкой Redis/Postgres и Traefik
-# Требования: запуск от root, установленные docker и docker compose
+# Только для Linux. Запуск: sudo ./setup_n8n.sh
+# Требования: root, docker и docker compose
 # =============================================
 
 set -e
 LOGFILE="setup_n8n.log"
+
+# Проверка ОС: только Linux
+if [ "$(uname -s)" != "Linux" ]; then
+  echo "Этот скрипт предназначен только для Linux. Текущая ОС: $(uname -s)"
+  exit 1
+fi
 
 # Проверка прав
 if [ "$EUID" -ne 0 ]; then
@@ -259,6 +262,21 @@ POSTGRES_NON_ROOT_USER=n8n
 POSTGRES_NON_ROOT_PASSWORD=n8n
 ######################################
 EOF
+
+  # Создаём init-data.sh для Postgres (создание пользователя n8n) — без внешних файлов
+  echo "Создаю init-data.sh для Postgres..." | tee -a $LOGFILE
+  cat > init-data.sh <<'INITEOF'
+#!/bin/bash
+set -e
+psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-EOSQL
+  CREATE USER $POSTGRES_NON_ROOT_USER WITH PASSWORD '\''$POSTGRES_NON_ROOT_PASSWORD'\'';
+  GRANT ALL PRIVILEGES ON DATABASE $POSTGRES_DB TO $POSTGRES_NON_ROOT_USER;
+  \connect $POSTGRES_DB
+  GRANT ALL ON SCHEMA public TO $POSTGRES_NON_ROOT_USER;
+EOSQL
+INITEOF
+  chmod +x init-data.sh
+  chown "$INSTALL_USER:$INSTALL_USER" init-data.sh
 
   # Перезаписываем docker-compose.yml с учётом postgres и всех зависимостей
   echo "Обновляю docker-compose.yml с поддержкой Postgres..." | tee -a $LOGFILE

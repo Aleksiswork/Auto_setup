@@ -1,4 +1,7 @@
 #!/bin/bash
+# Если на Linux ошибка "Syntax error: newline unexpected" — уберите Windows-переводы строк:
+#   sed -i 's/\r$//' setup_n8n.sh
+# или: dos2unix setup_n8n.sh
 
 # =============================================
 # Скрипт установки n8n с поддержкой Redis/Postgres и Traefik
